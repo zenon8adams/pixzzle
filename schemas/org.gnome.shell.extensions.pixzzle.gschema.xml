@@ -1,0 +1,12 @@
+<schemalist gettext-domain="gnome-shell-extensions">
+  <schema id="org.gnome.shell.extensions.pixzzle"
+      path="/org/gnome/shell/extensions/pixzzle/">
+    <key name="take-screenshot" type="as">
+      <default><![CDATA[['<Ctrl>F9']]]></default>
+      <summary>Open screenshot</summary>
+      <description>
+        Key to open shutter
+      </description>
+    </key>
+  </schema>
+</schemalist>

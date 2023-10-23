@@ -1,0 +1,10 @@
+{
+  "name": "pixzzle",
+  "description": "Explore Pixlzzle for effortless and engaging screen capturing",
+  "uuid": "pixzzle@zenon8adams.gmail.com",
+  "schema_name": "org.gnome.extensions.pixzzle",
+  "gettext-domain": "pixzzle",
+  "shell-version": [
+    "42"
+  ]
+}
