@@ -13,7 +13,13 @@ function lg() {
   }
 }
 
-const inflateSettings = function() {
+function format() {
+   const vicinity = arguments[0];
+   const actualArgs = Array.from(arguments).slice(1);
+   return '[' + SCHEMA_NAME + '] ' + '[' + vicinity + '] ' + actualArgs.join(' ');
+}
+
+function inflateSettings() {
   let schemaDir = Me.dir.get_child('schemas').get_path();
   let schemaSource = Gio.SettingsSchemaSource.new_from_directory(
       schemaDir, Gio.SettingsSchemaSource.get_default(), false);
