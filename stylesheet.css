@@ -14,7 +14,6 @@
 
 .pixzzle-ui-close-button StIcon {
   icon-size: 2em;
-  -icon-size: 2em;
 }
 
 .pixzzle-ui-close-button.left {
@@ -169,13 +168,23 @@
 }
 
 #UIMainViewerLayout {
-    spacing: 1.5em;
-    padding-bottom: 2em;
+  spacing: 1.5em;
+  padding-bottom: 2em;
 }
 
-.pixzzle-ui-base-container {
+#UISplitViewLayout {
+  spacing: 1em;
+}
+
+.pixzzle-ui-base-container,
+#UIThumbnailViewer {
   background-color: rgba(0, 0, 0, 0.2);
   border-radius: 10px;
+}
+
+#UIThumbnailViewer {
+  width: 10em;
+  max-width: 10em;
 }
 
 .pixzzle-ui-screenshot-button {
@@ -185,5 +194,20 @@
   background-color: #507ab9;
 }
 .pixzzle-ui-screenshot-button:hover {
-    background-color: #5280C4;
+  background-color: #5280c4;
+}
+
+.pixzzle-ui-thumbnail-scrollview {
+  border-top: 0.6em;
+  border-bottom: 0.6em;
+}
+
+.pixzzle-ui-thumbnail-close-button StIcon {
+  icon-size: 1.2em;
+}
+
+.pixzzle-ui-thumbnail-close-button {
+  border-radius: 99px;
+  color: #eee;
+  background-color: #c97657;
 }
