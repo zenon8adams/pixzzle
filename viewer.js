@@ -28,15 +28,17 @@ const {
   St,
   GdkPixbuf
 } = imports.gi;
+const File = Gio.File;
 
 const Main = imports.ui.main;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
-const { inflateSettings, lg, SCREENSHOT_KEY } = Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE } =
+  Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
 
-const INITIAL_WIDTH = 400;
+const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
 var UIMainViewer = GObject.registerClass(
@@ -63,10 +65,10 @@ var UIMainViewer = GObject.registerClass(
       this._lastX = 0;
       this._lastY = 0;
 
-      this.reset();
-
       this._isActive = false;
       Main.layoutManager.addTopChrome(this);
+
+      this.reset();
 
       this._borderThickness = this.get_theme_node().get_length('border-width');
       this._closeButton = new St.Button({
@@ -94,20 +96,27 @@ var UIMainViewer = GObject.registerClass(
       this._closeButton.connect('clicked', () => this._close());
       this.add_child(this._closeButton);
 
-      this._container = new St.BoxLayout({
+      this._topMostContainer = new St.BoxLayout({
         name: 'UIMainViewerLayout',
         vertical: true,
         x_expand: true,
         y_expand: true
       });
+      this.add_child(this._topMostContainer);
 
-      this.add_child(this._container);
-
-      this._baseScaffold = new UIBaseScaffold({
-        x_expand: true,
-        y_expand: true
+      this._splitXContainer = new St.BoxLayout({
+        name: 'UISplitViewLayout',
+        vertical: false,
+        x_expand: true
       });
-      this._container.add_child(this._baseScaffold);
+      this._topMostContainer.add_child(this._splitXContainer);
+
+      this._bigViewContainer = new St.BoxLayout({
+        x_expand: true,
+        y_expand: false,
+        x_align: Clutter.ActorAlign.CENTER,
+        y_align: Clutter.ActorAlign.CENTER
+      });
 
       this._screenshotButton = new St.Button({
         style_class: 'pixzzle-ui-screenshot-button',
@@ -115,10 +124,24 @@ var UIMainViewer = GObject.registerClass(
         x_expand: false,
         x_align: Clutter.ActorAlign.END
       });
-      this._container.add_child(this._screenshotButton);
+      this._topMostContainer.add_child(this._screenshotButton);
       this._screenshotButton.connect('clicked', () =>
         this._showScreenshotView()
       );
+
+      lg('[UIMainViewer::_init]', 'width:', this._screenshotButton.width);
+      this._thumbnailView = new UIThumbnailViewer({
+        name: 'UIThumbnailViewer',
+        x_expand: false
+      });
+      this._splitXContainer.add_child(this._bigViewContainer);
+      this._splitXContainer.add_child(this._thumbnailView);
+
+      this._imageViewer = new UIImageRenderer(this);
+      this._bigViewContainer.add_child(this._imageViewer);
+      this._thumbnailView.connect('replace', (_, filename) => {
+        this._imageViewer._replace(filename);
+      });
 
       this._settings = inflateSettings();
 
@@ -135,12 +158,35 @@ var UIMainViewer = GObject.registerClass(
       this._reload_theme();
     }
 
+    _computeBigViewSize() {
+      const offset = this.get_theme_node().get_length('border-width');
+      const itemSpacing = this._topMostContainer
+        .get_theme_node()
+        .get_length('spacing');
+      const itemOffset =
+        this._topMostContainer.get_theme_node().get_length('padding-bottom') *
+        2;
+      const spacing = this._splitXContainer
+        .get_theme_node()
+        .get_length('spacing');
+
+      const width =
+        this.width - offset * 2 - this._thumbnailView.width - spacing;
+      const height =
+        this.height - offset * 2 - spacing - itemOffset - itemSpacing;
+
+      return [width, height];
+    }
+
     _showScreenshotView() {
       if (!this._shutter) {
         this._shutter = new UIShutter();
         this._shutter.connect('begin-close', () => {
           lg('[UIMainViewer::_showScreenshotView::begin-close]');
           this._showUI();
+        });
+        this._shutter.connect('new-shot', (_, shotName) => {
+          this._thumbnailView._addShot(shotName);
         });
       }
 
@@ -320,7 +366,7 @@ var UIMainViewer = GObject.registerClass(
         }
       } else if (x - leftX > 0 && rightX - x > 0) {
         if (y - topY > 0 && bottomY - y > 0) {
-          if (this._isInRestrictedArea(x, y, leftX, topY, rightX, bottomY)) {
+          if (!this._isInRestrictedArea(x, y, leftX, topY, rightX, bottomY)) {
             lg(desc, 'MOVE_OR_RESIZE');
             return Meta.Cursor.MOVE_OR_RESIZE_WINDOW;
           }
@@ -332,10 +378,11 @@ var UIMainViewer = GObject.registerClass(
 
     _isInRestrictedArea(x, y, leftX, topY, rightX, bottomY) {
       const offset = this.get_theme_node().get_length('border-width');
-      const itemSpacing = this._container
+      const itemSpacing = this._topMostContainer
         .get_theme_node()
         .get_length('spacing');
-      const itemOffset = this._container
+
+      const itemOffset = this._topMostContainer
         .get_theme_node()
         .get_length('padding-bottom');
       const shotWidth = this._screenshotButton.width;
@@ -344,7 +391,7 @@ var UIMainViewer = GObject.registerClass(
       const shotY = bottomY - offset - itemOffset - shotHeight;
       const shotMargin = offset + itemOffset + itemSpacing + shotHeight;
 
-      return (
+      return !(
         x - leftX < offset ||
         rightX - x < offset ||
         y - topY < offset ||
@@ -494,6 +541,7 @@ var UIMainViewer = GObject.registerClass(
       }
 
       this._updateSize();
+      this._imageViewer._redraw();
 
       this._dragX += dx;
       this._dragY += dy;
@@ -549,77 +597,317 @@ var UIMainViewer = GObject.registerClass(
 
       return super.vfunc_leave_event(event);
     }
-
-    vfunc_enter_event(event) {
-      lg('[UIMainViewer::vfunc_enter_event]');
-      return super.vfunc_enter_event(event);
-    }
   }
 );
 
 const UIImageRenderer = GObject.registerClass(
   class UIImageRenderer extends St.Widget {
-    _init(filename, padding, params) {
+    _init(topParent, params) {
       super._init(params);
-      const pixbuf = GdkPixbuf.Pixbuf.new_from_file(filename);
+      this._topParent = topParent;
+    }
+
+    _redraw() {
+      if (this._filename) {
+        const [width, height] = this._topParent._computeBigViewSize();
+        this._render(width, height);
+      }
+    }
+
+    _replace(newFile) {
+      lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
+      if (newFile === null) {
+        this._unload();
+      } else if (newFile !== this._filename) {
+        const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
+        if (pixbuf != null) {
+          this._pixbuf = pixbuf;
+          this._filename = newFile;
+          this._reload();
+        }
+      }
+    }
+
+    _unload() {
+      this._pixbuf = null;
+      this._filename = null;
+      this._image = null;
+      this._reload();
+    }
+
+    _reload() {
+      if (!this._image) {
+        this._image = Clutter.Image.new();
+        this._reload();
+        this.set_content(this._image);
+        return;
+      }
+
+      if (this._pixbuf) {
+        this._image.set_data(
+          this._pixbuf.get_pixels(),
+          this._pixbuf.get_has_alpha()
+            ? Cogl.PixelFormat.RGBA_8888
+            : Cogl.PixelFormat.RGB_888,
+          this._pixbuf.get_width(),
+          this._pixbuf.get_height(),
+          this._pixbuf.get_rowstride()
+        );
+        this._redraw();
+      }
+    }
+
+    _render(maxWidth, maxHeight) {
+      const [w, h] = [maxWidth, maxHeight];
+      const [width, height] = [
+        this._pixbuf.get_width(),
+        this._pixbuf.get_height()
+      ];
+      this.set_size(this._pixbuf.get_width(), this._pixbuf.get_height());
+      if (width > maxWidth || height > maxHeight) {
+        const aspectRatio = width / height;
+        if (maxWidth / maxHeight > aspectRatio) {
+          maxWidth = Math.floor(maxHeight * aspectRatio);
+        } else {
+          maxHeight = Math.floor((maxWidth * 1) / aspectRatio);
+        }
+        this.set_size(maxWidth, maxHeight);
+      }
+    }
+  }
+);
+
+const UIThumbnailViewer = GObject.registerClass(
+  {
+    GTypeName: 'UIThumbnailViewer',
+    Signals: {
+      replace: { param_types: [GObject.TYPE_STRING] }
+    }
+  },
+  class UIThumbnailViewer extends St.BoxLayout {
+    _init(params) {
+      super._init({
+        ...params,
+        y_expand: false
+      });
+
+      this._scrollView = new St.ScrollView({
+        style_class: 'pixzzle-ui-thumbnail-scrollview',
+        hscrollbar_policy: St.PolicyType.EXTERNAL,
+        vscrollbar_policy: St.PolicyType.EXTERNAL,
+        enable_mouse_scrolling: true,
+        y_expand: false
+      });
+      this.add_child(this._scrollView);
+      this._scrollView.set_overlay_scrollbars(false);
+
+      this._viewBox = new St.Viewport({
+        layout_manager: new Clutter.BoxLayout({
+          orientation: Clutter.Orientation.VERTICAL,
+          spacing: 6
+        }),
+        y_align: Clutter.ActorAlign.START
+      });
+      this._scrollView.add_actor(this._viewBox);
+
+      this._connector = this.connect('notify::mapped', () => {
+        lg('[UIThumbnailViewer::_init::notify::mapped]');
+        if (!this._initialized) {
+          this._loadShots()
+            .then((allShots) => {
+              this.emit('replace', allShots[0] ?? null);
+              this.disconnect(this._connector);
+            })
+            .catch((err) => logError(err, 'Unable to load previous state'));
+        } else {
+          this._initialized = true;
+        }
+      });
+    }
+
+    _addShot(newShot) {
+      const shot = new UIPreview(newShot, this.width);
+      shot.connect('activate', (widget) => {
+        lg('UIThumbnailViewer::_addShot::shot::activate]', widget);
+        this.emit('replace', widget._filename);
+      });
+      shot.connect('delete', (widget) => {
+        this._viewBox.remove_actor(widget);
+        const nextShot = this._viewBox.get_child_at_index(0);
+        this.emit('replace', nextShot?._filename ?? null);
+      });
+      this._viewBox.add_actor(shot);
+      if (this._viewBox.get_children().length === 1) {
+        this.emit('replace', newShot);
+      }
+    }
+
+    _removeShot(widget) {
+      widget.ease({
+        opacity: 0,
+        duration: 200,
+        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        onComplete: () => this._viewBox.remove_actor(widget)
+      });
+    }
+
+    async _loadShots() {
+      let snapshotDir = SHOT_STORE;
+      if (!snapshotDir.query_exists(null)) {
+        return;
+      }
+
+      const allShots = await this._processShots(snapshotDir);
+      for (const shot of allShots) {
+        this._addShot(shot);
+      }
+
+      return allShots;
+    }
+
+    _processShots(directory) {
+      const DEFAULT_ATTRIBUTES = 'standard::*';
+      return new Promise((resolve, reject) => {
+        if (this._entriesEnumerateCancellable) {
+          this._entriesEnumerateCancellable.cancel();
+        }
+        this._entriesEnumerateCancellable = new Gio.Cancellable();
+        directory.enumerate_children_async(
+          DEFAULT_ATTRIBUTES,
+          Gio.FileQueryInfoFlags.NONE,
+          GLib.PRIORITY_DEFAULT,
+          this._entriesEnumerateCancellable,
+          (source, result) => {
+            this._entriesEnumerateCancellable = null;
+            const files = [];
+            try {
+              let fileEnum = source.enumerate_children_finish(result);
+              let info;
+              while ((info = fileEnum.next_file(null))) {
+                const filename = GLib.build_filenamev([
+                  directory.get_path(),
+                  info.get_name()
+                ]);
+                files.push(filename);
+              }
+            } catch (e) {
+              if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
+                resolve([]);
+              } else {
+                reject('file-read-error');
+              }
+              return;
+            }
+            resolve(files);
+            return;
+          }
+        );
+      });
+    }
+  }
+);
+
+const UIPreview = GObject.registerClass(
+  {
+    GTypeName: 'UIPreview',
+    Signals: {
+      activate: {},
+      delete: {}
+    }
+  },
+  class UIPreview extends St.Widget {
+    _init(filename, span, params) {
+      super._init({ ...params, y_expand: false });
+
+      this._surface = new St.Widget({
+        x_expand: false,
+        y_expand: false
+      });
+      this.add_child(this._surface);
+
+      const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
+      let pixbuf = baseBuf.new_subpixbuf(0, 0, span, span);
+      if (pixbuf === null) {
+        const aspectRatio = baseBuf.get_width() / baseBuf.get_height();
+        pixbuf = baseBuf
+          .scale_simple(
+            span,
+            (span * 1.0) / aspectRatio,
+            GdkPixbuf.InterpType.BILINEAR
+          )
+          .new_subpixbuf(0, 0, span, span);
+        /* We use multiple blur effects since Clutter
+         * BlurEffect doesn't provide us with a way
+         *  to set the sigma.
+         */
+        this._surface.add_effect(new Clutter.BlurEffect());
+        this._surface.add_effect(new Clutter.BlurEffect());
+        this._surface.add_effect(new Clutter.BlurEffect());
+      }
+      this._filename = filename;
       this._image = Clutter.Image.new();
       this._image.set_data(
         pixbuf.get_pixels(),
         pixbuf.get_has_alpha()
           ? Cogl.PixelFormat.RGBA_8888
-          : Cogl.PixelFormat.RGBA_888,
+          : Cogl.PixelFormat.RGB_888,
         pixbuf.get_width(),
         pixbuf.get_height(),
         pixbuf.get_rowstride()
       );
+      this._surface.set_content(this._image);
+      this._surface.set_size(span, span);
 
-      const scale = pixbuf.get_width() / pixbuf.get_height();
-    }
-  }
-);
-
-const UIBaseScaffold = GObject.registerClass(
-  class UIBaseScaffold extends St.Widget {
-    _init(params) {
-      super._init(params);
-
-      this._scrollView = new St.ScrollView({
-        hscrollbar_policy: St.PolicyType.NEVER,
-        vscrollbar_policy: St.PolicyType.NEVER,
-        enable_mouse_scrolling: true,
-        x_expand: true,
-        y_expand: true
+      this._trigger = new St.Button({
+        style_class: 'pixzzle-ui-thumbnail-trigger'
       });
+      this.add_child(this._trigger);
 
-      this._scrollView.add_constraint(
+      this._trigger.add_constraint(
         new Clutter.BindConstraint({
           source: this,
           coordinate: Clutter.BindCoordinate.WIDTH
         })
       );
-      this._scrollView.add_constraint(
+      this._trigger.add_constraint(
         new Clutter.BindConstraint({
           source: this,
           coordinate: Clutter.BindCoordinate.HEIGHT
         })
       );
-      this._baseContainer = new St.Viewport({
-        style_class: 'pixzzle-ui-base-container',
-        x_expand: true,
-        y_expand: true
+      this._trigger.connect('clicked', () => {
+        lg('[UIPreview::_init::_trigger::clicked]');
+        this.emit('activate');
       });
-      this._scrollView.add_actor(this._baseContainer);
-      this.add_child(this._scrollView);
-    }
 
-    set_stage_size(x, y, width, height) {
-      this._baseContainer.set_position(x, y);
-      this._baseContainer.set_size(width, height);
-      lg('[UIBaseScaffold::set_stage_size]', x, y, width, height);
-    }
+      this._removeButton = new St.Button({
+        style_class: 'pixzzle-ui-thumbnail-close-button',
+        child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
+        x: 0,
+        y: 0
+      });
+      this._removeButton.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this,
+          align_axis: Clutter.AlignAxis.X_AXIS,
+          pivot_point: new Graphene.Point({ x: 1, y: 0 }),
+          factor: 1
+        })
+      );
+      this._removeButton.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this,
+          align_axis: Clutter.AlignAxis.Y_AXIS,
+          pivot_point: new Graphene.Point({ x: 0, y: 0 }),
+          factor: 0
+        })
+      );
+      this.add_child(this._removeButton);
 
-    get_base() {
-      return this._baseContainer;
+      this._removeButton.connect('clicked', () => {
+        lg('[UIPreview::_init::_closeButton::clicked]');
+        this.emit('delete');
+      });
     }
   }
 );

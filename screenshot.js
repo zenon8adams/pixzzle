@@ -43,7 +43,8 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY } = Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE } =
+  Me.imports.utils;
 
 const IconLabelButton = GObject.registerClass(
   class IconLabelButton extends St.Button {
@@ -58,10 +59,7 @@ const IconLabelButton = GObject.registerClass(
 
       this._container.add_child(new St.Icon({ icon_name: iconName }));
       this._container.add_child(
-        new St.Label({
-          text: label,
-          x_align: Clutter.ActorAlign.CENTER
-        })
+        new St.Label({ text: label, x_align: Clutter.ActorAlign.CENTER })
       );
     }
   }
@@ -140,27 +138,27 @@ const UIAreaIndicator = GObject.registerClass(
     _init(params) {
       super._init(params);
       /*\
-             *   We make this structure
-             *   +------------------+
-             *   |        TR        |
-             *   +------++----++----+
-             *   |  LR  || SR || RR |
-             *   +------++----++----+
-             *   |        BR        |
-             *   +------------------+
-             *   TR -> Top rect
-             *   LR -> Left rect
-             *   RR -> Right rect
-             *   BR -> Bottom rect
-             *   SR -> Selection rect
-             *
-             *   Anytime we set the size
-             *   of the selection rect,
-             *   all the anchors(constraints)
-             *   we have will stretch/strain
-             *   to give space for the
-             *   selection rectangle.
-            \*/
+       *   We make this structure
+       *   +------------------+
+       *   |        TR        |
+       *   +------++----++----+
+       *   |  LR  || SR || RR |
+       *   +------++----++----+
+       *   |        BR        |
+       *   +------------------+
+       *   TR -> Top rect
+       *   LR -> Left rect
+       *   RR -> Right rect
+       *   BR -> Bottom rect
+       *   SR -> Selection rect
+       *
+       *   Anytime we set the size
+       *   of the selection rect,
+       *   all the anchors(constraints)
+       *   we have will stretch/strain
+       *   to give space for the
+       *   selection rectangle.
+      \*/
 
       this._topRect = new St.Widget({
         style_class: 'pixzzle-ui-area-indicator-shade'
@@ -310,9 +308,7 @@ const UIAreaIndicator = GObject.registerClass(
 );
 
 const UIAreaSelector = GObject.registerClass(
-  {
-    Signals: { 'drag-started': {}, 'drag-ended': {} }
-  },
+  { Signals: { 'drag-started': {}, 'drag-ended': {} } },
   class UIAreaSelector extends St.Widget {
     _init(params) {
       super._init(params);
@@ -366,15 +362,15 @@ const UIAreaSelector = GObject.registerClass(
       // Initialize area to out of bounds so reset() below resets it.
       // This is the selection rectangle
       /*\
-             * (_startX, _startY)
-             *         +----------------+
-             *         |                |
-             *         |                |
-             *         |                |
-             *         |                |
-             *         +----------------+
-             *                   (_lastX, _lastY)
-            \*/
+       * (_startX, _startY)
+       *         +----------------+
+       *         |                |
+       *         |                |
+       *         |                |
+       *         |                |
+       *         +----------------+
+       *                   (_lastX, _lastY)
+      \*/
       this._startX = -1;
       this._startY = 0;
       this._lastX = 0;
@@ -404,8 +400,8 @@ const UIAreaSelector = GObject.registerClass(
             Main.layoutManager.monitors[Main.layoutManager.primaryIndex];
 
           /*\
-                     * Set the initial dimension of the selection rect
-                    \*/
+                       * Set the initial dimension of the selection rect
+                      \*/
           this._startX = monitor.x + Math.floor((monitor.width * 3) / 8);
           this._startY = monitor.y + Math.floor((monitor.height * 3) / 8);
           this._lastX = monitor.x + Math.floor((monitor.width * 5) / 8) - 1;
@@ -417,8 +413,8 @@ const UIAreaSelector = GObject.registerClass(
     }
 
     /*\
-         * Returns the [x, y, w, h] of this geometry
-        \*/
+     * Returns the [x, y, w, h] of this geometry
+    \*/
     getGeometry() {
       const leftX = Math.min(this._startX, this._lastX);
       const topY = Math.min(this._startY, this._lastY);
@@ -433,11 +429,11 @@ const UIAreaSelector = GObject.registerClass(
       this._areaIndicator.setSelectionRect(x, y, w, h);
 
       /*\
-             * Update the selection rectangle handles with
-             * the newly computed dimensions of the
-             * selection rectangle using the center point
-             * of the handle (i.e offset).
-            \*/
+               * Update the selection rectangle handles with
+               * the newly computed dimensions of the
+               * selection rectangle using the center point
+               * of the handle (i.e offset).
+              \*/
       const offset = this._handleSize / 2;
       this._topLeftHandle.set_position(x - offset, y - offset);
       this._topRightHandle.set_position(x + w - 1 - offset, y - offset);
@@ -469,30 +465,30 @@ const UIAreaSelector = GObject.registerClass(
         5 * St.ThemeContext.get_for_stage(global.stage).scaleFactor;
 
       /*\
-             *  We compute the cursor type on this basis:
-             *  For this expression,
-             *  leftX - x >= 0 && leftX - x <= threshold
-             *  Imagine the cursor coming into the left
-             *  boundary of the selection rectangle and
-             *  is has just gone past the left rectangle
-             *  boundary by at most threshold, we would
-             *  have fallen on the left rectangle
-             *  boundary.
-             *  There are three possible cases for the
-             *  y-axis of the cursor:
-             *  1. It is very close the the top-left
-             *  corner of the rectangle(NW_RESIZE).
-             *  2. It is very close to the bottom-left
-             *  corner of the rectangle(SW_RESIZE).
-             *  3. It is between the top-left and the
-             *  bottom-left corners of the rectangle
-             *  (i.e it is the left edge of the rect)
-             *  (WEST_RESIZE).
-             *
-             *  The other cases can the thought of as
-             *  rotating the rectangle and repeating
-             *  this process for each sides.
-            \*/
+       *  We compute the cursor type on this basis:
+       *  For this expression,
+       *  leftX - x >= 0 && leftX - x <= threshold
+       *  Imagine the cursor coming into the left
+       *  boundary of the selection rectangle and
+       *  is has just gone past the left rectangle
+       *  boundary by at most threshold, we would
+       *  have fallen on the left rectangle
+       *  boundary.
+       *  There are three possible cases for the
+       *  y-axis of the cursor:
+       *  1. It is very close the the top-left
+       *  corner of the rectangle(NW_RESIZE).
+       *  2. It is very close to the bottom-left
+       *  corner of the rectangle(SW_RESIZE).
+       *  3. It is between the top-left and the
+       *  bottom-left corners of the rectangle
+       *  (i.e it is the left edge of the rect)
+       *  (WEST_RESIZE).
+       *
+       *  The other cases can the thought of as
+       *  rotating the rectangle and repeating
+       *  this process for each sides.
+      \*/
       if (leftX - x >= 0 && leftX - x <= threshold) {
         if (topY - y >= 0 && topY - y <= threshold)
           return Meta.Cursor.NW_RESIZE;
@@ -620,43 +616,43 @@ const UIAreaSelector = GObject.registerClass(
         // Start X and Y are set to the stationary sides, while last X
         // and Y are set to the moving sides.
         /*\
-                 *
-                 * If the north-east handle is dragged for example,
-                 * we have to update y-coordinate of the north-west(top-left)
-                 * handle, and the x-coordinate of the south-east(bottom-right)
-                 * handle.
-                 *
-                 *  We update to                 The dragged
-                 *  this y-coordinate               handle
-                 *      !                             !
-                 *      +-----------------------------+
-                 *      |                             |
-                 *      +----------------+            |
-                 *      |                |  The new   |
-                 *      | Rectangle      |  size of   |
-                 *      | size before    |  the       |
-                 *      | the north-east |  selection |
-                 *      | handle was     |  after     |
-                 *      | dragged.       |  dragging. |
-                 *      |                |            |
-                 *      +----------------+------------+
-                 *                                    ^
-                 *                               We update to
-                 *                               this x-coordinate
-                 *
-                 *    In this example case,
-                 *    we set this._startX to the x-coordinate
-                 *    of north-west handle (i.e the stationary side),
-                 *    we set this._startY to the y-coordinate
-                 *    of south-east handle (i.e the stationary side).
-                 *    We set the y-coordinate of top-left corner to
-                 *    lastY and the x-coordinate of the bottom-right
-                 *    corner leftX. It doesn't really matter if we
-                 *    picked this._startX and this._lastY since our
-                 *    this.getGeometry() function uses a min-max to
-                 *    determine the bounding box of the current
-                 *    selection.
-                \*/
+         *
+         * If the north-east handle is dragged for example,
+         * we have to update y-coordinate of the north-west(top-left)
+         * handle, and the x-coordinate of the south-east(bottom-right)
+         * handle.
+         *
+         *  We update to                 The dragged
+         *  this y-coordinate               handle
+         *      !                             !
+         *      +-----------------------------+
+         *      |                             |
+         *      +----------------+            |
+         *      |                |  The new   |
+         *      | Rectangle      |  size of   |
+         *      | size before    |  the       |
+         *      | the north-east |  selection |
+         *      | handle was     |  after     |
+         *      | dragged.       |  dragging. |
+         *      |                |            |
+         *      +----------------+------------+
+         *                                    ^
+         *                               We update to
+         *                               this x-coordinate
+         *
+         *    In this example case,
+         *    we set this._startX to the x-coordinate
+         *    of north-west handle (i.e the stationary side),
+         *    we set this._startY to the y-coordinate
+         *    of south-east handle (i.e the stationary side).
+         *    We set the y-coordinate of top-left corner to
+         *    lastY and the x-coordinate of the bottom-right
+         *    corner leftX. It doesn't really matter if we
+         *    picked this._startX and this._lastY since our
+         *    this.getGeometry() function uses a min-max to
+         *    determine the bounding box of the current
+         *    selection.
+        \*/
         if (
           cursor === Meta.Cursor.NW_RESIZE ||
           cursor === Meta.Cursor.WEST_RESIZE ||
@@ -746,29 +742,29 @@ const UIAreaSelector = GObject.registerClass(
           let newLastY = this._lastY + dy;
 
           /*\
-                     * To understand the purpose of the overshoot,
-                     * Let us imagine a cursor that appears
-                     * at a position past the edge of the screen:
-                     *
-                     * The start
-                     * of rectangle
-                     * returned due   The actual
-                     * to overshoot   starting position
-                     * in the x-axis  of the monitor
-                     *   !              !
-                     *   +--------------+-----------------------+
-                     *   |              |                       |
-                     *   |              |                       |
-                     *   |              |                       |
-                     *   |              |                       |
-                     *   +--------------+-----------------------+
-                     *   The dx computation will be a negative
-                     *   value and is excess by the overshootX
-                     *   (i.e -newStartX) we have to remove
-                     *   this value from dx by adding it to
-                     *   the negative dx in order to bring it
-                     *   to zero.
-                    \*/
+           * To understand the purpose of the overshoot,
+           * Let us imagine a cursor that appears
+           * at a position past the edge of the screen:
+           *
+           * The start
+           * of rectangle
+           * returned due   The actual
+           * to overshoot   starting position
+           * in the x-axis  of the monitor
+           *   !              !
+           *   +--------------+-----------------------+
+           *   |              |                       |
+           *   |              |                       |
+           *   |              |                       |
+           *   |              |                       |
+           *   +--------------+-----------------------+
+           *   The dx computation will be a negative
+           *   value and is excess by the overshootX
+           *   (i.e -newStartX) we have to remove
+           *   this value from dx by adding it to
+           *   the negative dx in order to bring it
+           *   to zero.
+          \*/
 
           let overshootX = 0;
           let overshootY = 0;
@@ -843,36 +839,36 @@ const UIAreaSelector = GObject.registerClass(
           // If we drag the handle past a selection side, update which
           // handles are which.
           /*\
-                     *  Example:
-                     *
-                     * The this._lastX(which had `leftX` saved in it) is
-                     * x-coordinate of point A, and this._lastY(which
-                     * had `topY` saved in it) is y-coordinate of point `A`.
-                     *
-                     * If we have gone from this:
-                     *
-                     *  A-------------B
-                     *  |             |
-                     *  |             |
-                     *  |             |
-                     *  |             |
-                     *  C-------------D
-                     *                .
-                     *  to this:      .
-                     *                .
-                     *                B-------------A
-                     *                |             |
-                     *                |             |
-                     *                |             |
-                     *                |             |
-                     *                D-------------C
-                     *
-                     * After the lateral inversion, the this._lastX(which
-                     * is now positioned at the `new A`) would be greater
-                     * than the this._startX(which had `rightX` saved in it).
-                     * We have to change the cursor pointer from `NW_RESIZE`
-                     * to `NE_RESIZE`.
-                    \*/
+           *  Example:
+           *
+           * The this._lastX(which had `leftX` saved in it) is
+           * x-coordinate of point A, and this._lastY(which
+           * had `topY` saved in it) is y-coordinate of point `A`.
+           *
+           * If we have gone from this:
+           *
+           *  A-------------B
+           *  |             |
+           *  |             |
+           *  |             |
+           *  |             |
+           *  C-------------D
+           *                .
+           *  to this:      .
+           *                .
+           *                B-------------A
+           *                |             |
+           *                |             |
+           *                |             |
+           *                |             |
+           *                D-------------C
+           *
+           * After the lateral inversion, the this._lastX(which
+           * is now positioned at the `new A`) would be greater
+           * than the this._startX(which had `rightX` saved in it).
+           * We have to change the cursor pointer from `NW_RESIZE`
+           * to `NE_RESIZE`.
+          \*/
           if (this._lastX > this._startX) {
             if (this._dragCursor === Meta.Cursor.NW_RESIZE)
               this._dragCursor = Meta.Cursor.NE_RESIZE;
@@ -970,7 +966,10 @@ const UIAreaSelector = GObject.registerClass(
 
 var UIShutter = GObject.registerClass(
   {
-    Signals: { 'begin-close': {} }
+    Signals: {
+      'begin-close': {},
+      'new-shot': { param_types: [GObject.TYPE_STRING] }
+    }
   },
   class UIShutter extends St.Widget {
     _init() {
@@ -1171,14 +1170,12 @@ var UIShutter = GObject.registerClass(
         style_class: 'pixzzle-ui-capture-button'
       });
       this._captureButton.set_child(
-        new St.Widget({
-          style_class: 'pixzzle-ui-capture-button-circle'
-        })
+        new St.Widget({ style_class: 'pixzzle-ui-capture-button-circle' })
       );
       this.add_child(
         new Tooltip(this._captureButton, {
           /* Translators: since this string refers to an action,
-            it needs to be phrased as a verb. */
+        it needs to be phrased as a verb. */
           text: _('Capture'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
@@ -1290,9 +1287,7 @@ var UIShutter = GObject.registerClass(
       this._screenSelectors = [];
 
       for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
-        const bin = new St.Widget({
-          layout_manager: new Clutter.BinLayout()
-        });
+        const bin = new St.Widget({ layout_manager: new Clutter.BinLayout() });
         bin.add_constraint(new Layout.MonitorConstraint({ index: i }));
         this.insert_child_below(bin, this._primaryMonitorBin);
         this._monitorBins.push(bin);
@@ -1538,15 +1533,97 @@ var UIShutter = GObject.registerClass(
         const geometry = this._getSelectedGeometry(true);
 
         let cursorTexture = this._cursor.content?.get_texture();
-        if (!this._cursor.visible) cursinflateSettingsorTexture = null;
+        if (!this._cursor.visible) cursorTexture = null;
 
-        captureScreenshot(texture, geometry, this._scale, {
+        this._captureScreenshot(texture, geometry, this._scale, {
           texture: cursorTexture ?? null,
           x: this._cursor.x * this._scale,
           y: this._cursor.y * this._scale,
           scale: this._cursorScale
         }).catch((e) => logError(e, 'Error capturing screenshot'));
       }
+    }
+
+    /**
+     * Stores a PNG-encoded screenshot into the clipboard and a file, and shows a
+     * notification.
+     *
+     * @param {GLib.Bytes} bytes - The PNG-encoded screenshot.
+     * @param {GdkPixbuf.Pixbuf} pixbuf - The Pixbuf with the screenshot.
+     */
+    _storeScreenshot(bytes, pixbuf) {
+      // Store to the clipboard first in case storing to file fails.
+      const clipboard = St.Clipboard.get_default();
+      clipboard.set_content(St.ClipboardType.CLIPBOARD, 'image/png', bytes);
+
+      const rand = GLib.uuid_string_random();
+      const time = GLib.DateTime.new_now_local();
+      const fmt = rand + '-%s';
+
+      const lockdownSettings = new Gio.Settings({
+        schema_id: 'org.gnome.desktop.lockdown'
+      });
+      const disableSaveToDisk = lockdownSettings.get_boolean(
+        'disable-save-to-disk'
+      );
+
+      if (!disableSaveToDisk) {
+        const dir = SHOT_STORE;
+        const timestamp = time.format('%Y-%m-%d-%H-%M-%S');
+        const name = fmt.format(timestamp);
+
+        const file = Gio.File.new_for_path(
+          GLib.build_filenamev([dir.get_path(), `${name}.png`])
+        );
+
+        const stream = file.create(Gio.FileCreateFlags.NONE, null);
+        stream.write_bytes(bytes, null);
+
+        return file.get_path();
+      }
+
+      return null;
+    }
+
+    /**
+     * Captures a screenshot from a texture, given a region, scale and optional
+     * cursor data.
+     *
+     * @param {Cogl.Texture} texture - The texture to take the screenshot from.
+     * @param {number[4]} [geometry] - The region to use: x, y, width and height.
+     * @param {number} scale - The texture scale.
+     * @param {object} [cursor] - Cursor data to include in the screenshot.
+     * @param {Cogl.Texture} cursor.texture - The cursor texture.
+     * @param {number} cursor.x - The cursor x coordinate.
+     * @param {number} cursor.y - The cursor y coordinate.
+     * @param {number} cursor.scale - The cursor texture scale.
+     */
+    async _captureScreenshot(texture, geometry, scale, cursor) {
+      const stream = Gio.MemoryOutputStream.new_resizable();
+      const [x, y, w, h] = geometry ?? [0, 0, -1, -1];
+      if (cursor === null) cursor = { texture: null, x: 0, y: 0, scale: 1 };
+
+      global.display
+        .get_sound_player()
+        .play_from_theme('screen-capture', _('Screenshot taken'), null);
+
+      const pixbuf = await Shell.Screenshot.composite_to_stream(
+        texture,
+        x,
+        y,
+        w,
+        h,
+        scale,
+        cursor.texture,
+        cursor.x,
+        cursor.y,
+        cursor.scale,
+        stream
+      );
+
+      stream.close(null);
+      const filename = this._storeScreenshot(stream.steal_as_bytes(), pixbuf);
+      this.emit('new-shot', filename);
     }
 
     vfunc_key_press_event(event) {
@@ -1603,215 +1680,3 @@ var UIShutter = GObject.registerClass(
     }
   }
 );
-
-/**
- * Stores a PNG-encoded screenshot into the clipboard and a file, and shows a
- * notification.
- *
- * @param {GLib.Bytes} bytes - The PNG-encoded screenshot.
- * @param {GdkPixbuf.Pixbuf} pixbuf - The Pixbuf with the screenshot.
- */
-function _storeScreenshot(bytes, pixbuf) {
-  // Store to the clipboard first in case storing to file fails.
-  const clipboard = St.Clipboard.get_default();
-  clipboard.set_content(St.ClipboardType.CLIPBOARD, 'image/png', bytes);
-
-  const time = GLib.DateTime.new_now_local();
-
-  // This will be set in the first save to disk branch and then accessed
-  // in the second save to disk branch, so we need to declare it outside.
-  let file;
-
-  // The function is declared here rather than inside the condition to
-  // satisfy eslint.
-
-  /**
-   * Returns a filename suffix with an increasingly large index.
-   *
-   * @returns {Generator<string|*, void, *>} suffix string
-   */
-  function* suffixes() {
-    yield '';
-
-    for (let i = 1; ; i++) yield `-${i}`;
-  }
-
-  /**
-   * Adds a record of a screenshot file in the recently used files list.
-   *
-   * @param {Gio.File} screenshotFile - The screenshot file.
-   */
-  function saveRecentFile(screenshotFile) {
-    const recentFile = GLib.build_filenamev([
-      GLib.get_user_data_dir(),
-      'recently-used.xbel'
-    ]);
-    const uri = screenshotFile.get_uri();
-    const bookmarks = new GLib.BookmarkFile();
-    try {
-      bookmarks.load_from_file(recentFile);
-    } catch (e) {
-      if (
-        !e.matches(
-          GLib.BookmarkFileError,
-          GLib.BookmarkFileError.FILE_NOT_FOUND
-        )
-      ) {
-        log(`Could not open recent file ${uri}: ${e.message}`);
-        return;
-      }
-    }
-
-    try {
-      bookmarks.add_application(uri, GLib.get_prgname(), 'gio open %u');
-      bookmarks.to_file(recentFile);
-    } catch (e) {
-      log(`Could not save recent file ${uri}: ${e.message}`);
-    }
-  }
-
-  const lockdownSettings = new Gio.Settings({
-    schema_id: 'org.gnome.desktop.lockdown'
-  });
-  const disableSaveToDisk = lockdownSettings.get_boolean(
-    'disable-save-to-disk'
-  );
-
-  if (!disableSaveToDisk) {
-    const dir = Gio.File.new_for_path(
-      GLib.build_filenamev([
-        GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) ||
-          GLib.get_home_dir(),
-        // Translators: name of the folder under ~/Pictures for screenshots.
-        _('Screenshots')
-      ])
-    );
-
-    try {
-      dir.make_directory_with_parents(null);
-    } catch (e) {
-      if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)) throw e;
-    }
-
-    const timestamp = time.format('%Y-%m-%d %H-%M-%S');
-    // Translators: this is the name of the file that the screenshot is
-    // saved to. The placeholder is a timestamp, e.g. "2017-05-21 12-24-03".
-    const name = _('Screenshot from %s').format(timestamp);
-
-    // If the target file already exists, try appending a suffix with an
-    // increasing number to it.
-    for (const suffix of suffixes()) {
-      file = Gio.File.new_for_path(
-        GLib.build_filenamev([dir.get_path(), `${name}${suffix}.png`])
-      );
-
-      try {
-        const stream = file.create(Gio.FileCreateFlags.NONE, null);
-        stream.write_bytes(bytes, null);
-        break;
-      } catch (e) {
-        if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)) throw e;
-      }
-    }
-  }
-
-  // Create a St.ImageContent icon for the notification. We want
-  // St.ImageContent specifically because it preserves the aspect ratio when
-  // shown in a notification.
-  const pixels = pixbuf.read_pixel_bytes();
-  const content = St.ImageContent.new_with_preferred_size(
-    pixbuf.width,
-    pixbuf.height
-  );
-  content.set_bytes(
-    pixels,
-    Cogl.PixelFormat.RGBA_8888,
-    pixbuf.width,
-    pixbuf.height,
-    pixbuf.rowstride
-  );
-
-  // Show a notification.
-  const source = new MessageTray.Source(
-    // Translators: notification source name.
-    _('Screenshot'),
-    'screenshot-recorded-symbolic'
-  );
-  const notification = new MessageTray.Notification(
-    source,
-    // Translators: notification title.
-    _('Screenshot captured'),
-    // Translators: notification body when a screenshot was captured.
-    _('You can paste the image from the clipboard.'),
-    { datetime: time, gicon: content }
-  );
-
-  if (!disableSaveToDisk) {
-    // Translators: button on the screenshot notification.
-    notification.addAction(_('Show in Files'), () => {
-      const app = Gio.app_info_get_default_for_type('inode/directory', false);
-
-      if (app === null) {
-        // It may be null e.g. in a toolbox without nautilus.
-        log('Error showing in files: no default app set for inode/directory');
-        return;
-      }
-
-      app.launch([file], global.create_app_launch_context(0, -1));
-    });
-    notification.connect('activated', () => {
-      try {
-        Gio.app_info_launch_default_for_uri(
-          file.get_uri(),
-          global.create_app_launch_context(0, -1)
-        );
-      } catch (err) {
-        logError(err, 'Error opening screenshot');
-      }
-    });
-  }
-
-  notification.setTransient(true);
-  Main.messageTray.add(source);
-  source.showNotification(notification);
-}
-
-/**
- * Captures a screenshot from a texture, given a region, scale and optional
- * cursor data.
- *
- * @param {Cogl.Texture} texture - The texture to take the screenshot from.
- * @param {number[4]} [geometry] - The region to use: x, y, width and height.
- * @param {number} scale - The texture scale.
- * @param {object} [cursor] - Cursor data to include in the screenshot.
- * @param {Cogl.Texture} cursor.texture - The cursor texture.
- * @param {number} cursor.x - The cursor x coordinate.
- * @param {number} cursor.y - The cursor y coordinate.
- * @param {number} cursor.scale - The cursor texture scale.
- */
-async function captureScreenshot(texture, geometry, scale, cursor) {
-  const stream = Gio.MemoryOutputStream.new_resizable();
-  const [x, y, w, h] = geometry ?? [0, 0, -1, -1];
-  if (cursor === null) cursor = { texture: null, x: 0, y: 0, scale: 1 };
-
-  global.display
-    .get_sound_player()
-    .play_from_theme('screen-capture', _('Screenshot taken'), null);
-
-  const pixbuf = await Shell.Screenshot.composite_to_stream(
-    texture,
-    x,
-    y,
-    w,
-    h,
-    scale,
-    cursor.texture,
-    cursor.x,
-    cursor.y,
-    cursor.scale,
-    stream
-  );
-
-  stream.close(null);
-  _storeScreenshot(stream.steal_as_bytes(), pixbuf);
-}
