@@ -165,6 +165,7 @@
 #UIMainViewer {
   border-radius: 10px;
   border-width: 2em;
+  border-bottom: 0px;
 }
 
 #UIMainViewerLayout {

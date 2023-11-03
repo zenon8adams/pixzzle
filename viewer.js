@@ -106,12 +106,12 @@ var UIMainViewer = GObject.registerClass(
       });
       this.add_child(this._topMostContainer);
 
-      this._splitXContainer = new St.BoxLayout({
+      this._splitViewXContainer = new St.BoxLayout({
         name: 'UISplitViewLayout',
         vertical: false,
         x_expand: true
       });
-      this._topMostContainer.add_child(this._splitXContainer);
+      this._topMostContainer.add_child(this._splitViewXContainer);
 
       this._bigViewContainer = new St.BoxLayout({
         x_expand: true,
@@ -136,14 +136,27 @@ var UIMainViewer = GObject.registerClass(
         name: 'UIThumbnailViewer',
         x_expand: false
       });
-      this._splitXContainer.add_child(this._bigViewContainer);
-      this._splitXContainer.add_child(this._thumbnailView);
-
-      this._imageViewer = new UIImageRenderer(this);
-      this._bigViewContainer.add_child(this._imageViewer);
       this._thumbnailView.connect('replace', (_, filename) => {
         this._imageViewer._replace(filename);
       });
+
+      this._splitViewXContainer.add_child(this._bigViewContainer);
+      this._splitViewXContainer.add_child(this._thumbnailView);
+
+      this._imageViewer = new UIImageRenderer(this);
+      this._imageViewer.connect('replaced', (_, maxWidth, maxHeight) => {
+        this._minWidth = Math.min(INITIAL_WIDTH, maxWidth);
+        this._maxWidth = Math.max(INITIAL_WIDTH, maxWidth);
+        this._minHeight = Math.min(INITIAL_HEIGHT, maxHeight);
+        this._maxHeight = Math.min(INITIAL_HEIGHT, maxHeight);
+      });
+      this._imageViewer.connect('notify::mapped', () => {
+        this._minWidth = INITIAL_WIDTH;
+        this._maxWidth = INITIAL_WIDTH;
+        this._minHeight = INITIAL_HEIGHT;
+        this._maxHeight = INITIAL_HEIGHT;
+      });
+      this._bigViewContainer.add_child(this._imageViewer);
 
       this._settings = inflateSettings();
 
@@ -161,21 +174,34 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _computeBigViewSize() {
-      const offset = this.get_theme_node().get_length('border-width');
-      const itemSpacing = this._topMostContainer
+      const borderThickness = this.get_theme_node().get_length('border-width');
+      const topMostContainerLayoutSpacing = this._topMostContainer
         .get_theme_node()
         .get_length('spacing');
-      const itemOffset =
-        this._topMostContainer.get_theme_node().get_length('padding-bottom') *
-        2;
-      const spacing = this._splitXContainer
+      const topMostContainerBottomPadding = this._topMostContainer
+        .get_theme_node()
+        .get_length('padding-bottom');
+      const splitSpacing = this._splitViewXContainer
         .get_theme_node()
         .get_length('spacing');
 
       const width =
-        this.width - offset * 2 - this._thumbnailView.width - spacing;
+        this.width -
+        borderThickness * 2 -
+        this._thumbnailView.width -
+        splitSpacing;
+      /*\
+       * FIXME: For the height, the BoxLayout `SplitViewXContainer`
+       * forces the this.border-bottom off. I'll use this workaround
+       * of multiplying borderThickness by 2 to account for the
+       * pushed off bottom border, till I find a fix.
+      \*/
       const height =
-        this.height - offset * 2 - spacing - itemOffset - itemSpacing;
+        this.height -
+        borderThickness * 2 -
+        splitSpacing -
+        topMostContainerBottomPadding -
+        topMostContainerLayoutSpacing;
 
       return [width, height];
     }
@@ -384,14 +410,11 @@ var UIMainViewer = GObject.registerClass(
         .get_theme_node()
         .get_length('spacing');
 
-      const itemOffset = this._topMostContainer
-        .get_theme_node()
-        .get_length('padding-bottom');
       const shotWidth = this._screenshotButton.width;
       const shotHeight = this._screenshotButton.height;
       const shotX = rightX - offset - shotWidth;
-      const shotY = bottomY - offset - itemOffset - shotHeight;
-      const shotMargin = offset + itemOffset + itemSpacing + shotHeight;
+      const shotY = bottomY - offset - shotHeight;
+      const shotMargin = offset + itemSpacing + shotHeight;
 
       return !(
         x - leftX < offset ||
@@ -468,6 +491,13 @@ var UIMainViewer = GObject.registerClass(
         this._activeMonitor.height
       ];
 
+      const [leftX, topY, rightX, bottomY] = [
+        this._startX,
+        this._startY,
+        this._lastX,
+        this._lastY
+      ];
+
       if (cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
         this._startX += dx;
         this._startY += dy;
@@ -542,6 +572,27 @@ var UIMainViewer = GObject.registerClass(
         dy -= overshootY;
       }
 
+      if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+        const [x, y, w, h] = this._getGeometry();
+        if (w < INITIAL_WIDTH || h < INITIAL_HEIGHT) {
+          if (leftX < x) {
+            this._startX = leftX;
+            dx = 0;
+          } else if (x + w - 1 < rightX) {
+            this._lastX = rightX;
+            dx = 0;
+          }
+
+          if (topY < y) {
+            dy = 0;
+            this._startY = topY;
+          } else if (y + h - 1 < bottomY) {
+            dy = 0;
+            this._lastY = bottomY;
+          }
+        }
+      }
+
       this._updateSize();
       if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
         this._imageViewer._redraw();
@@ -605,6 +656,13 @@ var UIMainViewer = GObject.registerClass(
 );
 
 const UIImageRenderer = GObject.registerClass(
+  {
+    Signals: {
+      replaced: {
+        param_types: [GObject.TYPE_INT, GObject.TYPE_INT]
+      }
+    }
+  },
   class UIImageRenderer extends St.Widget {
     _init(topParent, params) {
       super._init(params);
@@ -621,7 +679,7 @@ const UIImageRenderer = GObject.registerClass(
             Math.min(this._pixbuf.get_width(), maxWidth),
             Math.min(this._pixbuf.get_height(), maxHeight)
           );
-          if (pixbuf === null) {        
+          if (pixbuf === null) {
             return;
           }
           context.save();
@@ -630,7 +688,7 @@ const UIImageRenderer = GObject.registerClass(
           context.restore();
           Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0);
           context.paint();
-        } else if(this._filename) {
+        } else if (this._filename) {
           context.save();
           context.setOperator(Cairo.Operator.CLEAR);
           context.paint();
@@ -650,12 +708,14 @@ const UIImageRenderer = GObject.registerClass(
       lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
       if (newFile === null) {
         this._unload();
+        this.emit('replaced', INITIAL_WIDTH, INITIAL_HEIGHT);
       } else if (newFile !== this._filename) {
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
         if (pixbuf != null) {
           this._pixbuf = pixbuf;
           this._filename = newFile;
           this._reload();
+          this.emit('replaced', pixbuf.get_width(), pixbuf.get_height());
         }
       }
     }
