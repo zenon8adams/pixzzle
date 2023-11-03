@@ -26,10 +26,12 @@ const {
   Meta,
   Shell,
   St,
+  Gdk,
   GdkPixbuf
 } = imports.gi;
-const File = Gio.File;
+const Cairo = imports.cairo;
 
+const File = Gio.File;
 const Main = imports.ui.main;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
@@ -541,7 +543,9 @@ var UIMainViewer = GObject.registerClass(
       }
 
       this._updateSize();
-      this._imageViewer._redraw();
+      if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+        this._imageViewer._redraw();
+      }
 
       this._dragX += dx;
       this._dragY += dy;
@@ -604,7 +608,35 @@ const UIImageRenderer = GObject.registerClass(
   class UIImageRenderer extends St.Widget {
     _init(topParent, params) {
       super._init(params);
+
       this._topParent = topParent;
+      this._canvas = new Clutter.Canvas();
+      this.set_content(this._canvas);
+      this._canvas.connect('draw', (canvas, context) => {
+        if (this._pixbuf && this._filename) {
+          const [maxWidth, maxHeight] = this._topParent._computeBigViewSize();
+          const pixbuf = this._pixbuf.new_subpixbuf(
+            0,
+            0,
+            Math.min(this._pixbuf.get_width(), maxWidth),
+            Math.min(this._pixbuf.get_height(), maxHeight)
+          );
+          if (pixbuf === null) {        
+            return;
+          }
+          context.save();
+          context.setOperator(Cairo.Operator.CLEAR);
+          context.paint();
+          context.restore();
+          Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0);
+          context.paint();
+        } else if(this._filename) {
+          context.save();
+          context.setOperator(Cairo.Operator.CLEAR);
+          context.paint();
+          this._filename = null;
+        }
+      });
     }
 
     _redraw() {
@@ -630,49 +662,17 @@ const UIImageRenderer = GObject.registerClass(
 
     _unload() {
       this._pixbuf = null;
-      this._filename = null;
-      this._image = null;
-      this._reload();
+      this._canvas.invalidate();
     }
 
     _reload() {
-      if (!this._image) {
-        this._image = Clutter.Image.new();
-        this._reload();
-        this.set_content(this._image);
-        return;
-      }
-
-      if (this._pixbuf) {
-        this._image.set_data(
-          this._pixbuf.get_pixels(),
-          this._pixbuf.get_has_alpha()
-            ? Cogl.PixelFormat.RGBA_8888
-            : Cogl.PixelFormat.RGB_888,
-          this._pixbuf.get_width(),
-          this._pixbuf.get_height(),
-          this._pixbuf.get_rowstride()
-        );
-        this._redraw();
-      }
+      this._redraw();
     }
 
     _render(maxWidth, maxHeight) {
-      const [w, h] = [maxWidth, maxHeight];
-      const [width, height] = [
-        this._pixbuf.get_width(),
-        this._pixbuf.get_height()
-      ];
-      this.set_size(this._pixbuf.get_width(), this._pixbuf.get_height());
-      if (width > maxWidth || height > maxHeight) {
-        const aspectRatio = width / height;
-        if (maxWidth / maxHeight > aspectRatio) {
-          maxWidth = Math.floor(maxHeight * aspectRatio);
-        } else {
-          maxHeight = Math.floor((maxWidth * 1) / aspectRatio);
-        }
-        this.set_size(maxWidth, maxHeight);
-      }
+      this._canvas.invalidate();
+      this._canvas.set_size(maxWidth, maxHeight);
+      this.set_size(maxWidth, maxHeight);
     }
   }
 );
@@ -836,13 +836,14 @@ const UIPreview = GObject.registerClass(
             GdkPixbuf.InterpType.BILINEAR
           )
           .new_subpixbuf(0, 0, span, span);
-        /* We use multiple blur effects since Clutter
-         * BlurEffect doesn't provide us with a way
-         *  to set the sigma.
-         */
-        this._surface.add_effect(new Clutter.BlurEffect());
-        this._surface.add_effect(new Clutter.BlurEffect());
-        this._surface.add_effect(new Clutter.BlurEffect());
+
+        this._surface.add_effect(
+          new Shell.BlurEffect({
+            brightness: 255,
+            mode: Shell.BlurMode.ACTOR,
+            sigma: 1
+          })
+        );
       }
       this._filename = filename;
       this._image = Clutter.Image.new();
