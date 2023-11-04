@@ -143,7 +143,9 @@ var UIMainViewer = GObject.registerClass(
       this._splitViewXContainer.add_child(this._bigViewContainer);
       this._splitViewXContainer.add_child(this._thumbnailView);
 
-      this._imageViewer = new UIImageRenderer(this);
+      this._imageViewer = new UIImageRenderer(this, {
+        reactive: true
+      });
       this._imageViewer.connect('replaced', (_, maxWidth, maxHeight) => {
         this._minWidth = Math.min(INITIAL_WIDTH, maxWidth);
         this._maxWidth = Math.max(INITIAL_WIDTH, maxWidth);
@@ -600,7 +602,7 @@ var UIMainViewer = GObject.registerClass(
 
       this._dragX += dx;
       this._dragY += dy;
-      return Clutter.EVENT_STOP;
+      return Clutter.EVENT_PROPAGATE;
     }
 
     vfunc_button_press_event(event) {
@@ -644,8 +646,7 @@ var UIMainViewer = GObject.registerClass(
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
       if (this._dragButton) {
-        this._onMotion(event, null);
-        return Clutter.EVENT_STOP;
+        return this._onMotion(event, null);
       } else {
         global.display.set_cursor(Meta.Cursor.DEFAULT);
       }
@@ -670,14 +671,16 @@ const UIImageRenderer = GObject.registerClass(
       this._topParent = topParent;
       this._canvas = new Clutter.Canvas();
       this.set_content(this._canvas);
+      this._xpos = 0;
+      this._ypos = 0;
       this._canvas.connect('draw', (canvas, context) => {
         if (this._pixbuf && this._filename) {
           const [maxWidth, maxHeight] = this._topParent._computeBigViewSize();
           const pixbuf = this._pixbuf.new_subpixbuf(
-            0,
-            0,
-            Math.min(this._pixbuf.get_width(), maxWidth),
-            Math.min(this._pixbuf.get_height(), maxHeight)
+            this._xpos,
+            this._ypos,
+            Math.min(this._pixbuf.get_width() - this._xpos, maxWidth),
+            Math.min(this._pixbuf.get_height() - this._ypos, maxHeight)
           );
           if (pixbuf === null) {
             return;
@@ -701,6 +704,8 @@ const UIImageRenderer = GObject.registerClass(
       if (this._filename) {
         const [width, height] = this._topParent._computeBigViewSize();
         this._render(width, height);
+      } else {
+        this._isPanningEnabled = false;
       }
     }
 
@@ -708,14 +713,18 @@ const UIImageRenderer = GObject.registerClass(
       lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
       if (newFile === null) {
         this._unload();
-        this.emit('replaced', INITIAL_WIDTH, INITIAL_HEIGHT);
+        // this.emit('replaced', INITIAL_WIDTH, INITIAL_HEIGHT);
+        this._isPanningEnabled = false;
       } else if (newFile !== this._filename) {
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
         if (pixbuf != null) {
+          this._xpos = 0;
+          this._ypos = 0;
           this._pixbuf = pixbuf;
           this._filename = newFile;
           this._reload();
-          this.emit('replaced', pixbuf.get_width(), pixbuf.get_height());
+          lg('[UIImageRenderer::_replace]', 'replaced::');
+          // this.emit('replaced', pixbuf.get_width(), pixbuf.get_height());
         }
       }
     }
@@ -730,9 +739,168 @@ const UIImageRenderer = GObject.registerClass(
     }
 
     _render(maxWidth, maxHeight) {
+      this._isPanningEnabled =
+        this._pixbuf.get_width() > maxWidth ||
+        this._pixbuf.get_height() > maxHeight;
+      if (!this._isPanningEnabled) {
+        this._xpos = this._ypos = 0;
+      }
       this._canvas.invalidate();
       this._canvas.set_size(maxWidth, maxHeight);
       this.set_size(maxWidth, maxHeight);
+    }
+
+    _onPress(event, button, sequence) {
+      if (this._dragButton) {
+        return Clutter.EVENT_PROPAGATE;
+      }
+
+      this._dragButton = button;
+      this._dragGrab = global.stage.grab(this);
+      [this._dragX, this._dragY] = [event.x, event.y];
+      global.display.set_cursor(Meta.Cursor.DND_IN_DRAG);
+      //this.emit('drag-started');
+
+      return Clutter.EVENT_STOP;
+    }
+
+    _onRelease(event, button, sequence) {
+      if (
+        this._dragButton !== button ||
+        this._dragSequence?.get_slot() !== sequence?.get_slot()
+      )
+        return Clutter.EVENT_PROPAGATE;
+
+      lg('[UIImageRenderer::_onRelease]');
+      this._stopDrag();
+
+      const [x, y] = [event.x, event.y];
+      global.display.set_cursor(Meta.Cursor.DEFAULT);
+
+      return Clutter.EVENT_STOP;
+    }
+
+    _stopDrag() {
+      if (!this._dragButton) return;
+
+      this._dragButton = 0;
+      this._dragGrab?.dismiss();
+      this._dragGrab = null;
+      this._dragSequence = null;
+
+      // this.emit('drag-ended');
+    }
+
+    _onMotion(event, sequence) {
+      lg('[UIImageRenderer::_onMotion]');
+      const [x, y] = [event.x, event.y];
+      if (!this._dragButton || !this._isPanningEnabled) {
+        return Clutter.EVENT_PROPAGATE;
+      }
+
+      let dx = Math.round(x - this._dragX);
+      let dy = Math.round(y - this._dragY);
+
+      const [maxWidth, maxHeight] = [
+        this._pixbuf.get_width(),
+        this._pixbuf.get_height()
+      ];
+
+      if (maxWidth > this.width) {
+        this._xpos += dx;
+        if (this._xpos < 0) {
+          const overshootX = -this._xpos;
+          this._xpos += overshootX;
+          dx -= overshootX;
+        }
+        if (this._xpos + this.width - 1 >= maxWidth) {
+          const overshootX = maxWidth - (this._xpos + this.width - 1);
+          this._xpos += overshootX;
+          dx -= overshootX;
+        }
+      } else {
+        dx = 0;
+      }
+
+      if (maxHeight > this.height) {
+        this._ypos += dy;
+        if (this._ypos < 0) {
+          const overshootY = -this._ypos;
+          this._ypos += overshootY;
+          dy -= overshootY;
+        }
+        if (this._ypos + this.height - 1 >= maxHeight) {
+          const overshootY = maxHeight - (this._ypos + this.height - 1);
+          this._ypos += overshootY;
+          dy -= overshootY;
+        }
+      } else {
+        dy = 0;
+      }
+
+      lg(
+        '[UIImageRenderer::_onMotion]',
+        'panning',
+        this.width,
+        this.height,
+        maxWidth,
+        maxHeight
+      );
+
+      this._canvas.invalidate();
+
+      this._dragX += dx;
+      this._dragY += dy;
+      return Clutter.EVENT_PROPAGATE;
+    }
+
+    vfunc_button_press_event(event) {
+      const button = event.button;
+      if (
+        button === Clutter.BUTTON_PRIMARY ||
+        button === Clutter.BUTTON_SECONDARY
+      )
+        return this._onPress(event, button, null);
+
+      return Clutter.EVENT_PROPAGATE;
+    }
+
+    vfunc_button_release_event(event) {
+      const button = event.button;
+      if (
+        button === Clutter.BUTTON_PRIMARY ||
+        button === Clutter.BUTTON_SECONDARY
+      )
+        return this._onRelease(event, button, null);
+
+      return Clutter.EVENT_PROPAGATE;
+    }
+
+    vfunc_motion_event(event) {
+      return this._onMotion(event, null);
+    }
+
+    vfunc_touch_event(event) {
+      const eventType = event.type;
+      if (eventType === Clutter.EventType.TOUCH_BEGIN)
+        return this._onPress(event, 'touch', event.get_event_sequence());
+      else if (eventType === Clutter.EventType.TOUCH_END)
+        return this._onRelease(event, 'touch', event.get_event_sequence());
+      else if (eventType === Clutter.EventType.TOUCH_UPDATE)
+        return this._onMotion(event, event.get_event_sequence());
+
+      return Clutter.EVENT_PROPAGATE;
+    }
+
+    vfunc_leave_event(event) {
+      lg('[UIImageRenderer::vfunc_leave_event]');
+      if (this._dragButton) {
+        return this._onMotion(event, null);
+      } else {
+        global.display.set_cursor(Meta.Cursor.DEFAULT);
+      }
+
+      return super.vfunc_leave_event(event);
     }
   }
 );
