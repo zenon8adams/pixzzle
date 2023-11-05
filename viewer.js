@@ -72,7 +72,6 @@ var UIMainViewer = GObject.registerClass(
 
       this.reset();
 
-      this._borderThickness = this.get_theme_node().get_length('border-width');
       this._closeButton = new St.Button({
         style_class: 'pixzzle-ui-close-button',
         child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
@@ -98,7 +97,7 @@ var UIMainViewer = GObject.registerClass(
       this._closeButton.connect('clicked', () => this._close());
       this.add_child(this._closeButton);
 
-      this._topMostContainer = new St.BoxLayout({
+      this._topMostContainer = new UILayout({
         name: 'UIMainViewerLayout',
         vertical: true,
         x_expand: true,
@@ -106,14 +105,14 @@ var UIMainViewer = GObject.registerClass(
       });
       this.add_child(this._topMostContainer);
 
-      this._splitViewXContainer = new St.BoxLayout({
+      this._splitViewXContainer = new UILayout({
         name: 'UISplitViewLayout',
         vertical: false,
         x_expand: true
       });
       this._topMostContainer.add_child(this._splitViewXContainer);
 
-      this._bigViewContainer = new St.BoxLayout({
+      this._bigViewContainer = new UILayout({
         x_expand: true,
         y_expand: false,
         x_align: Clutter.ActorAlign.CENTER,
@@ -143,20 +142,46 @@ var UIMainViewer = GObject.registerClass(
       this._splitViewXContainer.add_child(this._bigViewContainer);
       this._splitViewXContainer.add_child(this._thumbnailView);
 
-      this._imageViewer = new UIImageRenderer(this, {
-        reactive: true
-      });
-      this._imageViewer.connect('replaced', (_, maxWidth, maxHeight) => {
-        this._minWidth = Math.min(INITIAL_WIDTH, maxWidth);
-        this._maxWidth = Math.max(INITIAL_WIDTH, maxWidth);
-        this._minHeight = Math.min(INITIAL_HEIGHT, maxHeight);
-        this._maxHeight = Math.min(INITIAL_HEIGHT, maxHeight);
-      });
-      this._imageViewer.connect('notify::mapped', () => {
-        this._minWidth = INITIAL_WIDTH;
-        this._maxWidth = INITIAL_WIDTH;
-        this._minHeight = INITIAL_HEIGHT;
-        this._maxHeight = INITIAL_HEIGHT;
+      this._imageViewer = new UIImageRenderer(this);
+      this._imageViewer.connect('lock-axis', (_, axis) => {
+        let xGap = axis.X_AXIS;
+        let yGap = axis.Y_AXIS;
+        /*\
+         * If a new image has been loaded into the big view
+         * and it has a smaller size than the previous one,
+         * reset our size to default.
+         * If our old image has a bigger size than the new
+         * one, we shouldn't go back to the default size,
+         * we should move back just the enough distance
+         * the full image.
+        \*/
+        if (xGap < 0) {
+          if (this._lastX - (this._startX - xGap) + 1 >= INITIAL_WIDTH) {
+            this._startX += -xGap;
+          } else {
+            this._startX = this._lastX + 1 - INITIAL_WIDTH;
+          }
+          xGap = 0;
+        }
+
+        if (yGap < 0) {
+          if (this._lastY - (this._startY - yGap) + 1 >= INITIAL_HEIGHT) {
+            this._startY += -yGap;
+          } else {
+            this._startY = this._lastY + 1 - INITIAL_HEIGHT;
+          }
+          yGap = 0;
+        }
+        this._updateSize();
+
+        this._maxXSwing = Math.min(
+          this.width + xGap,
+          this._activeMonitor.width
+        );
+        this._maxYSwing = Math.min(
+          this.height + yGap,
+          this._activeMonitor.height
+        );
       });
       this._bigViewContainer.add_child(this._imageViewer);
 
@@ -175,35 +200,32 @@ var UIMainViewer = GObject.registerClass(
       this._reload_theme();
     }
 
-    _computeBigViewSize() {
-      const borderThickness = this.get_theme_node().get_length('border-width');
-      const topMostContainerLayoutSpacing = this._topMostContainer
-        .get_theme_node()
-        .get_length('spacing');
-      const topMostContainerBottomPadding = this._topMostContainer
-        .get_theme_node()
-        .get_length('padding-bottom');
-      const splitSpacing = this._splitViewXContainer
-        .get_theme_node()
-        .get_length('spacing');
+    get border_width() {
+      if (!this._border_width) {
+        this._border_width = this.get_theme_node().get_length('border-width');
+      }
 
+      return this._border_width;
+    }
+
+    _computeBigViewSize() {
       const width =
         this.width -
-        borderThickness * 2 -
+        this.border_width * 2 -
         this._thumbnailView.width -
-        splitSpacing;
+        this._splitViewXContainer.spacing;
       /*\
        * FIXME: For the height, the BoxLayout `SplitViewXContainer`
        * forces the this.border-bottom off. I'll use this workaround
-       * of multiplying borderThickness by 2 to account for the
+       * of multiplying border-width by 2 to account for the
        * pushed off bottom border, till I find a fix.
       \*/
       const height =
         this.height -
-        borderThickness * 2 -
-        splitSpacing -
-        topMostContainerBottomPadding -
-        topMostContainerLayoutSpacing;
+        this.border_width * 2 -
+        this._splitViewXContainer.spacing -
+        this._topMostContainer.bottom_padding -
+        this._topMostContainer.spacing;
 
       return [width, height];
     }
@@ -407,16 +429,14 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _isInRestrictedArea(x, y, leftX, topY, rightX, bottomY) {
-      const offset = this.get_theme_node().get_length('border-width');
-      const itemSpacing = this._topMostContainer
-        .get_theme_node()
-        .get_length('spacing');
+      const offset = this.border_width;
+      const spacing = this._topMostContainer.spacing;
 
       const shotWidth = this._screenshotButton.width;
       const shotHeight = this._screenshotButton.height;
       const shotX = rightX - offset - shotWidth;
       const shotY = bottomY - offset - shotHeight;
-      const shotMargin = offset + itemSpacing + shotHeight;
+      const shotMargin = offset + spacing + shotHeight;
 
       return !(
         x - leftX < offset ||
@@ -477,7 +497,6 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _onMotion(event, sequence) {
-      lg('[UIMainViewer::_onMotion]');
       const [x, y] = [event.x, event.y];
       if (!this._dragButton) {
         this._updateCursor(x, y);
@@ -576,28 +595,56 @@ var UIMainViewer = GObject.registerClass(
 
       if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
         const [x, y, w, h] = this._getGeometry();
-        if (w < INITIAL_WIDTH || h < INITIAL_HEIGHT) {
-          if (leftX < x) {
-            this._startX = leftX;
-            dx = 0;
-          } else if (x + w - 1 < rightX) {
-            this._lastX = rightX;
-            dx = 0;
-          }
+        const [minWidth, minHeight, maxWidth, maxHeight] = [
+          INITIAL_WIDTH,
+          INITIAL_HEIGHT,
+          this._maxXSwing ?? this.width,
+          this._maxYSwing ?? this.height
+        ];
 
+        if (w < minWidth) {
+          const overshootX = w - minWidth;
+          if (leftX < x) {
+            this._startX += overshootX;
+            dx -= overshootX;
+          } else if (x + w - 1 < rightX) {
+            this._lastX -= overshootX;
+            dx += overshootX;
+          }
+        } else if (w > maxWidth) {
+          const overshootX = w - maxWidth;
+          if (x < leftX) {
+            this._startX += overshootX;
+            dx -= overshootX;
+          } else if (x + w - 1 > rightX) {
+            this._lastX -= overshootX;
+            dx += overshootX;
+          }
+        }
+        if (h < minHeight) {
+          const overshootY = h - minHeight;
           if (topY < y) {
-            dy = 0;
-            this._startY = topY;
+            this._startY += overshootY;
+            dy -= overshootY;
           } else if (y + h - 1 < bottomY) {
-            dy = 0;
-            this._lastY = bottomY;
+            this._lastY -= overshootY;
+            dy += overshootY;
+          }
+        } else if (h > maxHeight) {
+          const overshootY = h - maxHeight;
+          if (y < topY) {
+            this._startY += overshootY;
+            dy -= overshootY;
+          } else if (y + h - 1 > bottomY) {
+            this._lastY -= overshootY;
+            dy += overshootY;
           }
         }
       }
 
       this._updateSize();
       if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
-        this._imageViewer._redraw();
+        this._imageViewer._redraw(dx, dy);
       }
 
       this._dragX += dx;
@@ -659,14 +706,17 @@ var UIMainViewer = GObject.registerClass(
 const UIImageRenderer = GObject.registerClass(
   {
     Signals: {
-      replaced: {
-        param_types: [GObject.TYPE_INT, GObject.TYPE_INT]
+      'lock-axis': {
+        param_types: [Object.prototype]
       }
     }
   },
   class UIImageRenderer extends St.Widget {
     _init(topParent, params) {
-      super._init(params);
+      super._init({
+        ...params,
+        reactive: true
+      });
 
       this._topParent = topParent;
       this._canvas = new Clutter.Canvas();
@@ -675,21 +725,36 @@ const UIImageRenderer = GObject.registerClass(
       this._ypos = 0;
       this._canvas.connect('draw', (canvas, context) => {
         if (this._pixbuf && this._filename) {
+          const pixWidth = this._pixbuf.get_width();
+          const pixHeight = this._pixbuf.get_height();
           const [maxWidth, maxHeight] = this._topParent._computeBigViewSize();
+          const [effectiveWidth, effectiveHeight] = [
+            Math.min(pixWidth - this._xpos, maxWidth),
+            Math.min(pixHeight - this._ypos, maxHeight)
+          ];
           const pixbuf = this._pixbuf.new_subpixbuf(
             this._xpos,
             this._ypos,
-            Math.min(this._pixbuf.get_width() - this._xpos, maxWidth),
-            Math.min(this._pixbuf.get_height() - this._ypos, maxHeight)
+            effectiveWidth,
+            effectiveHeight
           );
           if (pixbuf === null) {
+            lg(
+              '[UIImageRenderer::_init::_draw]',
+              'pixbuf = (null)'
+            );
             return;
           }
           context.save();
           context.setOperator(Cairo.Operator.CLEAR);
           context.paint();
           context.restore();
-          Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0);
+          Gdk.cairo_set_source_pixbuf(
+            context,
+            pixbuf,
+            (maxWidth - effectiveWidth) / 2,
+            (maxHeight - effectiveHeight) / 2
+          );
           context.paint();
         } else if (this._filename) {
           context.save();
@@ -700,10 +765,10 @@ const UIImageRenderer = GObject.registerClass(
       });
     }
 
-    _redraw() {
+    _redraw(deltaX, deltaY) {
       if (this._filename) {
         const [width, height] = this._topParent._computeBigViewSize();
-        this._render(width, height);
+        this._render(deltaX, deltaY, width, height);
       } else {
         this._isPanningEnabled = false;
       }
@@ -713,7 +778,7 @@ const UIImageRenderer = GObject.registerClass(
       lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
       if (newFile === null) {
         this._unload();
-        // this.emit('replaced', INITIAL_WIDTH, INITIAL_HEIGHT);
+        this.emit('lock-axis', { X_AXIS: 0, Y_AXIS: 0 });
         this._isPanningEnabled = false;
       } else if (newFile !== this._filename) {
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
@@ -723,8 +788,6 @@ const UIImageRenderer = GObject.registerClass(
           this._pixbuf = pixbuf;
           this._filename = newFile;
           this._reload();
-          lg('[UIImageRenderer::_replace]', 'replaced::');
-          // this.emit('replaced', pixbuf.get_width(), pixbuf.get_height());
         }
       }
     }
@@ -735,22 +798,56 @@ const UIImageRenderer = GObject.registerClass(
     }
 
     _reload() {
-      this._redraw();
+      const [width, height] = this._topParent._computeBigViewSize();
+      this.emit('lock-axis', {
+        X_AXIS: this._pixbuf.get_width() - width,
+        Y_AXIS: this._pixbuf.get_height() - height
+      });
+      this._redraw(0, 0);
     }
 
-    _render(maxWidth, maxHeight) {
-      this._isPanningEnabled =
-        this._pixbuf.get_width() > maxWidth ||
-        this._pixbuf.get_height() > maxHeight;
+    _render(deltaX, deltaY, maxWidth, maxHeight) {
+      const pixWidth = this._pixbuf.get_width();
+      const pixHeight = this._pixbuf.get_height();
+      this._isPanningEnabled = pixWidth > maxWidth || pixHeight > maxHeight;
+      const lockedAxis = {
+        X_AXIS: pixWidth <= maxWidth,
+        Y_AXIS: pixHeight <= maxHeight
+      };
       if (!this._isPanningEnabled) {
         this._xpos = this._ypos = 0;
+      } else {
+        /*\
+         * If the panning area is not yet
+         * at the edge, move the area
+         * to fill up the space created
+         * from the drag.
+         * Clip the drag delta that is added
+         * so that we don't exceed the 
+         * maximum size of the image.
+        \*/
+        if (!lockedAxis.X_AXIS && this._xpos + maxWidth >= pixWidth) {
+          this._xpos += Math.max(
+            -Math.abs(deltaX),
+            pixWidth - this._xpos - maxWidth
+          );
+        }
+
+        if (!lockedAxis.Y_AXIS && this._ypos + maxHeight >= pixHeight) {
+          this._ypos += Math.max(
+            -Math.abs(deltaY),
+            pixHeight - this._ypos - maxHeight
+          );
+        }
       }
+
       this._canvas.invalidate();
       this._canvas.set_size(maxWidth, maxHeight);
       this.set_size(maxWidth, maxHeight);
     }
 
     _onPress(event, button, sequence) {
+      lg('[UIImageRenderer::_onPress]');
       if (this._dragButton) {
         return Clutter.EVENT_PROPAGATE;
       }
@@ -759,7 +856,6 @@ const UIImageRenderer = GObject.registerClass(
       this._dragGrab = global.stage.grab(this);
       [this._dragX, this._dragY] = [event.x, event.y];
       global.display.set_cursor(Meta.Cursor.DND_IN_DRAG);
-      //this.emit('drag-started');
 
       return Clutter.EVENT_STOP;
     }
@@ -787,12 +883,9 @@ const UIImageRenderer = GObject.registerClass(
       this._dragGrab?.dismiss();
       this._dragGrab = null;
       this._dragSequence = null;
-
-      // this.emit('drag-ended');
     }
 
     _onMotion(event, sequence) {
-      lg('[UIImageRenderer::_onMotion]');
       const [x, y] = [event.x, event.y];
       if (!this._dragButton || !this._isPanningEnabled) {
         return Clutter.EVENT_PROPAGATE;
@@ -807,7 +900,7 @@ const UIImageRenderer = GObject.registerClass(
       ];
 
       if (maxWidth > this.width) {
-        this._xpos += dx;
+        this._xpos += -dx;
         if (this._xpos < 0) {
           const overshootX = -this._xpos;
           this._xpos += overshootX;
@@ -823,7 +916,7 @@ const UIImageRenderer = GObject.registerClass(
       }
 
       if (maxHeight > this.height) {
-        this._ypos += dy;
+        this._ypos += -dy;
         if (this._ypos < 0) {
           const overshootY = -this._ypos;
           this._ypos += overshootY;
@@ -837,15 +930,6 @@ const UIImageRenderer = GObject.registerClass(
       } else {
         dy = 0;
       }
-
-      lg(
-        '[UIImageRenderer::_onMotion]',
-        'panning',
-        this.width,
-        this.height,
-        maxWidth,
-        maxHeight
-      );
 
       this._canvas.invalidate();
 
@@ -1137,6 +1221,31 @@ const UIPreview = GObject.registerClass(
         lg('[UIPreview::_init::_closeButton::clicked]');
         this.emit('delete');
       });
+    }
+  }
+);
+
+const UILayout = GObject.registerClass(
+  class UILayout extends St.BoxLayout {
+    _init(params) {
+      super._init(params);
+    }
+
+    get spacing() {
+      if (!this._spacing) {
+        this._spacing = this.get_theme_node().get_length('spacing');
+      }
+
+      return this._spacing;
+    }
+
+    get bottom_padding() {
+      if (!this._bottom_padding) {
+        this._bottom_padding =
+          this.get_theme_node().get_length('padding-bottom');
+      }
+
+      return this._bottom_padding;
     }
   }
 );
