@@ -43,6 +43,12 @@ const { UIShutter } = Me.imports.screenshot;
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
+const EDGE_THRESHOLD = 5;
+
+const ViewMode = Object.freeze({
+  ADAPTIVE: Symbol('adaptive'),
+  FREE: Symbol('free')
+});
 var UIMainViewer = GObject.registerClass(
   {
     Signals: { 'drag-started': {}, 'drag-ended': {} }
@@ -68,6 +74,8 @@ var UIMainViewer = GObject.registerClass(
       this._lastY = 0;
 
       this._isActive = false;
+      this._viewMode = ViewMode.ADAPTIVE;
+
       Main.layoutManager.addTopChrome(this);
 
       this.reset();
@@ -78,6 +86,23 @@ var UIMainViewer = GObject.registerClass(
         x: 0,
         y: 0
       });
+      /*\
+       *  Move the close button within its parent
+       *  by factor 1. 0 means left-most end, 1
+       *  means right-most end.
+       *  The pivot_point indicates the part of
+       *  the close button to align
+       *  If the figure below is the close button,
+       *  to set the anchor point of the button
+       *  with which it will attach to its
+       *  parent, set pivot point to (0.5, 0.5).
+       *  +---------+
+       *  |         |
+       *  |    *    |
+       *  |         |
+       *  +---------+
+       *   - factor -
+      \*/
       this._closeButton.add_constraint(
         new Clutter.AlignConstraint({
           source: this,
@@ -144,6 +169,10 @@ var UIMainViewer = GObject.registerClass(
 
       this._imageViewer = new UIImageRenderer(this);
       this._imageViewer.connect('lock-axis', (_, axis) => {
+        if (this._viewMode !== ViewMode.ADAPTIVE) {
+          return;
+        }
+
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
         /*\
@@ -185,6 +214,14 @@ var UIMainViewer = GObject.registerClass(
       });
       this._bigViewContainer.add_child(this._imageViewer);
 
+      this._snapIndicator = new St.Widget({
+        style_class: 'pixzzle-ui-snap-indicator',
+        visible: true,
+        y_expand: true,
+        x_expand: true
+      });
+      Main.layoutManager.addChrome(this._snapIndicator);
+
       this._settings = inflateSettings();
 
       const uiModes = Shell.ActionMode.ALL & ~Shell.ActionMode.LOGIN_SCREEN;
@@ -198,6 +235,49 @@ var UIMainViewer = GObject.registerClass(
       );
       this.connect('destroy', this._onDestroy.bind(this));
       this._reload_theme();
+    }
+
+    _updateSnapIndicator(x, y, w, h) {
+      if (x === 0 && y === 0 && w === 0 && h === 0) {
+        this._snapIndicator.hide();
+        this._viewMode = ViewMode.ADAPTIVE;
+      } else {
+        this._snapIndicator.set_position(x, y);
+        this._snapIndicator.set_size(w, h);
+        this._viewMode = ViewMode.FREE;
+        this._snapIndicator.show();
+      }
+    }
+
+    _updateSizeFromIndicator() {
+      if (!this._originalGeometry) {
+        this._originalGeometry = [
+          this._startX,
+          this._startY,
+          this._lastX,
+          this._lastY
+        ];
+      }
+
+      if (this._dragCursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+        this._startX = this._snapIndicator.x;
+        this._lastX = this._snapIndicator.x + this._snapIndicator.width - 1;
+        this._startY = this._snapIndicator.y;
+        this._lastY = this._snapIndicator.y + this._snapIndicator.height - 1;
+      } else if (
+        this._startX > EDGE_THRESHOLD &&
+        this._startY > EDGE_THRESHOLD &&
+        this._activeMonitor.width - this._lastX > EDGE_THRESHOLD
+      ) {
+        [this._startX, this._startY, this._lastX, this._lastY] =
+          this._originalGeometry;
+        this._viewMode = ViewMode.ADAPTIVE;
+        this._originalGeometry = 0;
+      }
+
+      this._updateSize();
+      this._imageViewer._redraw(0, 0);
+      this._snapIndicator.hide();
     }
 
     get border_width() {
@@ -284,6 +364,8 @@ var UIMainViewer = GObject.registerClass(
       if (this._shutter) {
         this._shutter.destroy();
       }
+      Main.layoutManager.removeChrome(this._snapIndicator);
+      Main.layoutManager.removeChrome(this);
     }
 
     _showUI() {
@@ -492,6 +574,9 @@ var UIMainViewer = GObject.registerClass(
 
       const [x, y] = [event.x, event.y];
       this._updateCursor(x, y);
+      if (this._viewMode === ViewMode.FREE) {
+        this._updateSizeFromIndicator();
+      }
 
       return Clutter.EVENT_STOP;
     }
@@ -593,7 +678,10 @@ var UIMainViewer = GObject.registerClass(
         dy -= overshootY;
       }
 
-      if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+      if (
+        cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW &&
+        this._viewMode === ViewMode.ADAPTIVE
+      ) {
         const [x, y, w, h] = this._getGeometry();
         const [minWidth, minHeight, maxWidth, maxHeight] = [
           INITIAL_WIDTH,
@@ -640,10 +728,34 @@ var UIMainViewer = GObject.registerClass(
             dy += overshootY;
           }
         }
+      } else if (cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+        const leftTorque = monitorWidth / 2 - x;
+        const rightTorque = x - monitorWidth / 2;
+        const isEquallyLikely =
+          this._lastX <= monitorWidth &&
+          monitorWidth - this._lastX <= EDGE_THRESHOLD;
+        if (
+          this._startX >= 0 &&
+          this._startX <= EDGE_THRESHOLD &&
+          ((isEquallyLikely && leftTorque > rightTorque) || !isEquallyLikely)
+        ) {
+          this._updateSnapIndicator(0, 0, monitorWidth / 2, monitorHeight);
+        } else if (isEquallyLikely) {
+          this._updateSnapIndicator(
+            monitorWidth / 2,
+            0,
+            monitorWidth / 2,
+            monitorHeight
+          );
+        } else if (this._startY >= 0 && this._startY <= EDGE_THRESHOLD) {
+          this._updateSnapIndicator(0, 0, monitorWidth, monitorHeight);
+        } else {
+          this._updateSnapIndicator(0, 0, 0, 0);
+        }
       }
 
       this._updateSize();
-      if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+      if (this._dragCursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
         this._imageViewer._redraw(dx, dy);
       }
 
@@ -739,10 +851,7 @@ const UIImageRenderer = GObject.registerClass(
             effectiveHeight
           );
           if (pixbuf === null) {
-            lg(
-              '[UIImageRenderer::_init::_draw]',
-              'pixbuf = (null)'
-            );
+            lg('[UIImageRenderer::_init::_draw]', 'pixbuf = (null)');
             return;
           }
           context.save();
