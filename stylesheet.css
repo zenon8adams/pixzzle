@@ -212,3 +212,8 @@
   color: #eee;
   background-color: #c97657;
 }
+
+.pixzzle-ui-snap-indicator {
+    border: 1px solid #44C4C7;
+    background-color: rgba(72, 224, 227, 0.4);
+}
