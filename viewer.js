@@ -44,6 +44,7 @@ const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 5;
+const FULL_OPAQUE = 255;
 
 const ViewMode = Object.freeze({
   ADAPTIVE: Symbol('adaptive'),
@@ -231,7 +232,7 @@ var UIMainViewer = GObject.registerClass(
         this._settings,
         Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
         uiModes,
-        this._showUI.bind(this)
+        this._toggleUI.bind(this)
       );
       this.connect('destroy', this._onDestroy.bind(this));
       this._reload_theme();
@@ -387,7 +388,34 @@ var UIMainViewer = GObject.registerClass(
       });
       GLib.Source.set_name_by_id(
         this._timeoutId,
-        '[gnome-shell] UiMainViewer.open'
+        '[gnome-shell] UiMainViewer._showUI'
+      );
+    }
+
+    _toggleUI() {
+      this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+        const newOpacity = this._isActive ? FULL_OPAQUE : 0;
+        this.opacity = newOpacity;
+        if (!this._isActive) {
+          this.show();
+        }
+        this.ease({
+          opacity: FULL_OPAQUE - newOpacity,
+          duration: 150,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => {
+            this._isActive && this.hide();
+            this._isActive = !this._isActive;
+          }
+        });
+
+        lg('[UIMainViewer::_toggleUI]');
+        this._timeoutId = null;
+        return GLib.SOURCE_REMOVE;
+      });
+      GLib.Source.set_name_by_id(
+        this._timeoutId,
+        '[gnome-shell] UiMainViewer._toggleUI'
       );
     }
 
@@ -678,16 +706,14 @@ var UIMainViewer = GObject.registerClass(
         dy -= overshootY;
       }
 
-      if (
-        cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW &&
-        this._viewMode === ViewMode.ADAPTIVE
-      ) {
+      if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+        const isFreeMode = this._viewMode === ViewMode.FREE;
         const [x, y, w, h] = this._getGeometry();
         const [minWidth, minHeight, maxWidth, maxHeight] = [
           INITIAL_WIDTH,
           INITIAL_HEIGHT,
-          this._maxXSwing ?? this.width,
-          this._maxYSwing ?? this.height
+          isFreeMode ? monitorWidth : this._maxXSwing ?? this.width,
+          isFreeMode ? monitorHeight : this._maxYSwing ?? this.height
         ];
 
         if (w < minWidth) {
