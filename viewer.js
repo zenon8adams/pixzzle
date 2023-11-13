@@ -36,15 +36,15 @@ const Main = imports.ui.main;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
-const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE } =
+const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE, Panel } =
   Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
-const EDGE_THRESHOLD = 5;
-const FULL_OPAQUE = 255;
+const EDGE_THRESHOLD = 2;
+const FULLY_OPAQUE = 255;
 
 const ViewMode = Object.freeze({
   ADAPTIVE: Symbol('adaptive'),
@@ -63,7 +63,8 @@ var UIMainViewer = GObject.registerClass(
         layout_manager: new Clutter.BinLayout(),
         opacity: 0,
         visible: false,
-        reactive: true
+        reactive: true,
+        can_focus: true
       });
 
       this._dragButton = 0;
@@ -76,6 +77,7 @@ var UIMainViewer = GObject.registerClass(
 
       this._isActive = false;
       this._viewMode = ViewMode.ADAPTIVE;
+      this._emptyView = true;
 
       Main.layoutManager.addTopChrome(this);
 
@@ -145,13 +147,35 @@ var UIMainViewer = GObject.registerClass(
         y_align: Clutter.ActorAlign.CENTER
       });
 
+      this._settingsButton = new St.Button({
+        style_class: 'pixzzle-ui-settings-button',
+        label: 'settings',
+        child: new St.Icon({ icon_name: 'org.gnome.Settings-symbolic' }),
+        x_expand: false,
+        reactive: true,
+        x_align: Clutter.ActorAlign.CENTER,
+        rotation_angle_z: 0
+      });
+      this._settingsButton.set_pivot_point(0.5, 0.5);
+      this._buttonBox = new UILayout({
+        name: 'UIButtonBox',
+        vertical: false,
+        x_expand: true,
+        x_align: Clutter.ActorAlign.END
+      });
+      this._topMostContainer.add_child(this._buttonBox);
+      this._buttonBox.add_child(this._settingsButton);
+      this._settingsButton.connect('notify::hover', () => {
+        this._animateSettings();
+      });
+
       this._screenshotButton = new St.Button({
         style_class: 'pixzzle-ui-screenshot-button',
         label: 'Add New',
         x_expand: false,
         x_align: Clutter.ActorAlign.END
       });
-      this._topMostContainer.add_child(this._screenshotButton);
+      this._buttonBox.add_child(this._screenshotButton);
       this._screenshotButton.connect('clicked', () =>
         this._showScreenshotView()
       );
@@ -163,6 +187,7 @@ var UIMainViewer = GObject.registerClass(
       });
       this._thumbnailView.connect('replace', (_, filename) => {
         this._imageViewer._replace(filename);
+        this._emptyView = this._thumbnailView._shotCount() == 0;
       });
 
       this._splitViewXContainer.add_child(this._bigViewContainer);
@@ -213,6 +238,18 @@ var UIMainViewer = GObject.registerClass(
           this._activeMonitor.height
         );
       });
+      this._imageViewer.connect('clean-slate', () => {
+        this._maxXSwing = INITIAL_WIDTH;
+        this._maxYSwing = INITIAL_HEIGHT;
+        const xOffset = this.width - INITIAL_WIDTH;
+        const yOffset = this.height - INITIAL_HEIGHT;
+        if (xOffset > 0) this._startX += xOffset;
+        if (yOffset > 0) this._startY += yOffset;
+
+        this._viewMode = ViewMode.ADAPTIVE;
+        this._updateSize();
+        this._emptyView = true;
+      });
       this._bigViewContainer.add_child(this._imageViewer);
 
       this._snapIndicator = new St.Widget({
@@ -234,6 +271,11 @@ var UIMainViewer = GObject.registerClass(
         uiModes,
         this._toggleUI.bind(this)
       );
+
+      this.connect('notify::mapped', () => {
+          this._animateSettings();
+      });
+
       this.connect('destroy', this._onDestroy.bind(this));
       this._reload_theme();
     }
@@ -334,6 +376,19 @@ var UIMainViewer = GObject.registerClass(
       });
     }
 
+    _animateSettings() {
+      const ROTATION_ANGLE = 270;
+      const extent =
+        this._settingsButton.rotation_angle_z < ROTATION_ANGLE
+          ? ROTATION_ANGLE
+          : -ROTATION_ANGLE;
+      this._settingsButton.ease({
+        rotation_angle_z: extent,
+        duration: 800,
+        mode: Clutter.AnimationMode.LINEAR
+      });
+    }
+
     _reload_theme() {
       const theme_context = St.ThemeContext.get_for_stage(global.stage);
       const theme = theme_context.get_theme();
@@ -359,6 +414,7 @@ var UIMainViewer = GObject.registerClass(
         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         onComplete: this.hide.bind(this)
       });
+      this._snapIndicator.hide();
     }
 
     _onDestroy() {
@@ -394,13 +450,13 @@ var UIMainViewer = GObject.registerClass(
 
     _toggleUI() {
       this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-        const newOpacity = this._isActive ? FULL_OPAQUE : 0;
+        const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
         this.opacity = newOpacity;
         if (!this._isActive) {
           this.show();
         }
         this.ease({
-          opacity: FULL_OPAQUE - newOpacity,
+          opacity: FULLY_OPAQUE - newOpacity,
           duration: 150,
           mode: Clutter.AnimationMode.EASE_OUT_QUAD,
           onComplete: () => {
@@ -541,12 +597,18 @@ var UIMainViewer = GObject.registerClass(
     _isInRestrictedArea(x, y, leftX, topY, rightX, bottomY) {
       const offset = this.border_width;
       const spacing = this._topMostContainer.spacing;
+      const buttonBoxSpacing = this._buttonBox.spacing;
 
       const shotWidth = this._screenshotButton.width;
       const shotHeight = this._screenshotButton.height;
       const shotX = rightX - offset - shotWidth;
       const shotY = bottomY - offset - shotHeight;
       const shotMargin = offset + spacing + shotHeight;
+
+      const settingsWidth = this._settingsButton.width;
+      const settingsHeight = this._settingsButton.height;
+      const settingsX = shotX - buttonBoxSpacing - settingsWidth;
+      const settingsY = shotY;
 
       return !(
         x - leftX < offset ||
@@ -556,7 +618,11 @@ var UIMainViewer = GObject.registerClass(
           (x < shotX ||
             y < shotY ||
             x > shotX + shotWidth ||
-            y > shotY + shotHeight))
+            y > shotY + shotHeight) &&
+          (x < settingsX ||
+            y < settingsY ||
+            x > settingsX + settingsWidth ||
+            y > settingsY + settingsWidth))
       );
     }
 
@@ -682,25 +748,25 @@ var UIMainViewer = GObject.registerClass(
         }
       }
 
-      if (this._startX < 0) {
-        overshootX = -this._startX;
+      if (this._startX < Panel.Left.width) {
+        overshootX = Panel.Left.width - this._startX;
         this._startX += overshootX;
         this._lastX += overshootX;
         dx -= overshootX;
-      } else if (this._lastX >= monitorWidth) {
-        overshootX = monitorWidth - this._lastX;
+      } else if (this._lastX >= monitorWidth - Panel.Right.width) {
+        overshootX = monitorWidth - Panel.Right.width - this._lastX;
         this._startX += overshootX;
         this._lastX += overshootX;
         dx -= overshootX;
       }
 
-      if (this._startY < 0) {
-        overshootY = -this._startY;
+      if (this._startY < Panel.Top.height) {
+        overshootY = Panel.Top.height - this._startY;
         this._startY += overshootY;
         this._lastY += overshootY;
         dy -= overshootY;
-      } else if (this._lastY >= monitorHeight) {
-        overshootY = monitorHeight - this._lastY;
+      } else if (this._lastY >= monitorHeight - Panel.Bottom.height) {
+        overshootY = monitorHeight - Panel.Bottom.height - this._lastY;
         this._startY += overshootY;
         this._lastY += overshootY;
         dy -= overshootY;
@@ -754,27 +820,43 @@ var UIMainViewer = GObject.registerClass(
             dy += overshootY;
           }
         }
-      } else if (cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+      } else if (
+        cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW &&
+        !this._emptyView
+      ) {
         const leftTorque = monitorWidth / 2 - x;
         const rightTorque = x - monitorWidth / 2;
         const isEquallyLikely =
-          this._lastX <= monitorWidth &&
-          monitorWidth - this._lastX <= EDGE_THRESHOLD;
+          this._lastX <= monitorWidth - Panel.Right.width &&
+          monitorWidth - this._lastX <= EDGE_THRESHOLD + Panel.Right.width;
         if (
-          this._startX >= 0 &&
-          this._startX <= EDGE_THRESHOLD &&
+          this._startX >= Panel.Left.width &&
+          this._startX <= EDGE_THRESHOLD + Panel.Left.width &&
           ((isEquallyLikely && leftTorque > rightTorque) || !isEquallyLikely)
         ) {
-          this._updateSnapIndicator(0, 0, monitorWidth / 2, monitorHeight);
+          this._updateSnapIndicator(
+            0 + Panel.Left.width,
+            0 + Panel.Top.height,
+            monitorWidth / 2 - Panel.Left.width,
+            monitorHeight - Panel.Top.height - Panel.Bottom.height
+          );
         } else if (isEquallyLikely) {
           this._updateSnapIndicator(
             monitorWidth / 2,
-            0,
-            monitorWidth / 2,
-            monitorHeight
+            0 + Panel.Top.height,
+            monitorWidth / 2 - Panel.Right.width,
+            monitorHeight - Panel.Top.height - Panel.Bottom.height
           );
-        } else if (this._startY >= 0 && this._startY <= EDGE_THRESHOLD) {
-          this._updateSnapIndicator(0, 0, monitorWidth, monitorHeight);
+        } else if (
+          this._startY >= Panel.Top.height &&
+          this._startY <= EDGE_THRESHOLD + Panel.Top.height
+        ) {
+          this._updateSnapIndicator(
+            0 + Panel.Left.width,
+            0 + Panel.Top.height,
+            monitorWidth - Panel.Left.width - Panel.Right.width,
+            monitorHeight - Panel.Top.height - Panel.Bottom.height
+          );
         } else {
           this._updateSnapIndicator(0, 0, 0, 0);
         }
@@ -788,6 +870,14 @@ var UIMainViewer = GObject.registerClass(
       this._dragX += dx;
       this._dragY += dy;
       return Clutter.EVENT_PROPAGATE;
+    }
+
+    vfunc_key_press_event(event) {
+      const symbol = event.keyval;
+      lg('[UIMainViewer::vfunc_key_press_event]', 'symbol:', symbol);
+      this._imageViewer._onKeyPress(event);
+
+      return super.vfunc_key_press_event(event);
     }
 
     vfunc_button_press_event(event) {
@@ -830,6 +920,7 @@ var UIMainViewer = GObject.registerClass(
 
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
+      global.stage.set_key_focus(null);
       if (this._dragButton) {
         return this._onMotion(event, null);
       } else {
@@ -838,22 +929,38 @@ var UIMainViewer = GObject.registerClass(
 
       return super.vfunc_leave_event(event);
     }
+
+    vfunc_enter_event(event) {
+      lg('[UIMainViewer::vfunc_enter_event]');
+      this.grab_key_focus();
+      return super.vfunc_enter_event(event);
+    }
   }
 );
+
+const ViewOrientation = Object.freeze({
+  TOP: 0,
+  RIGHT: 1,
+  BOTTOM: 2,
+  LEFT: 3
+});
+const N_AXIS = 4;
 
 const UIImageRenderer = GObject.registerClass(
   {
     Signals: {
       'lock-axis': {
         param_types: [Object.prototype]
-      }
+      },
+      'clean-slate': {}
     }
   },
   class UIImageRenderer extends St.Widget {
     _init(topParent, params) {
       super._init({
         ...params,
-        reactive: true
+        reactive: true,
+        can_focus: true
       });
 
       this._topParent = topParent;
@@ -861,10 +968,15 @@ const UIImageRenderer = GObject.registerClass(
       this.set_content(this._canvas);
       this._xpos = 0;
       this._ypos = 0;
+      this._orientationLU = new Array(N_AXIS);
+      this._orientation = ViewOrientation.TOP;
       this._canvas.connect('draw', (canvas, context) => {
         if (this._pixbuf && this._filename) {
-          const pixWidth = this._pixbuf.get_width();
-          const pixHeight = this._pixbuf.get_height();
+          const [pixWidth, pixHeight] = [
+            this._pixbuf.get_width(),
+            this._pixbuf.get_height()
+          ];
+
           const [maxWidth, maxHeight] = this._topParent._computeBigViewSize();
           const [effectiveWidth, effectiveHeight] = [
             Math.min(pixWidth - this._xpos, maxWidth),
@@ -913,13 +1025,22 @@ const UIImageRenderer = GObject.registerClass(
       lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
       if (newFile === null) {
         this._unload();
-        this.emit('lock-axis', { X_AXIS: 0, Y_AXIS: 0 });
+        this.set_size(0, 0);
+        this._reOrient(-this._orientation, true /* flush */);
+        this.emit('clean-slate');
         this._isPanningEnabled = false;
       } else if (newFile !== this._filename) {
+        /*\
+         * Since we support rotation, create 
+         * a pixel buffer with a size of the
+         * maximum dimension that can be achieved
+         * through rotation. Any time we want
+         * to render, we will rotate the mouse
+         * to the current angle.
+        \*/
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
         if (pixbuf != null) {
-          this._xpos = 0;
-          this._ypos = 0;
+          this._reOrient(-this._orientation, true /* flush */);
           this._pixbuf = pixbuf;
           this._filename = newFile;
           this._reload();
@@ -934,16 +1055,23 @@ const UIImageRenderer = GObject.registerClass(
 
     _reload() {
       const [width, height] = this._topParent._computeBigViewSize();
+      const [pixWidth, pixHeight] = [
+        this._pixbuf.get_width(),
+        this._pixbuf.get_height()
+      ];
+
       this.emit('lock-axis', {
-        X_AXIS: this._pixbuf.get_width() - width,
-        Y_AXIS: this._pixbuf.get_height() - height
+        X_AXIS: pixWidth - width,
+        Y_AXIS: pixHeight - height
       });
       this._redraw(0, 0);
     }
 
     _render(deltaX, deltaY, maxWidth, maxHeight) {
-      const pixWidth = this._pixbuf.get_width();
-      const pixHeight = this._pixbuf.get_height();
+      const [pixWidth, pixHeight] = [
+        this._pixbuf.get_width(),
+        this._pixbuf.get_height()
+      ];
       this._isPanningEnabled = pixWidth > maxWidth || pixHeight > maxHeight;
       const lockedAxis = {
         X_AXIS: pixWidth <= maxWidth,
@@ -981,8 +1109,49 @@ const UIImageRenderer = GObject.registerClass(
       this.set_size(maxWidth, maxHeight);
     }
 
+    /*\
+     * Keep track of panning state at the current
+     * orientation and restore on the next rotation.
+    \*/
+    _reOrient(by, flush) {
+      if (flush) {
+        this._orientationLU.fill(null);
+      } else {
+        this._orientationLU[this._orientation] = {
+          x: this._xpos,
+          y: this._ypos
+        };
+      }
+
+      const next = (this._orientation + by) % N_AXIS;
+      this._orientation = next;
+      const pos = this._orientationLU[next];
+
+      this._xpos = pos?.x ?? 0;
+      this._ypos = pos?.y ?? 0;
+    }
+
+    _onKeyPress(event) {
+      const symbol = event.keyval;
+      if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
+        if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
+          this._pixbuf = this._pixbuf.rotate_simple(
+            GdkPixbuf.PixbufRotation.CLOCKWISE
+          );
+          this._reOrient(1);
+          this._reload();
+        } else if (symbol === Clutter.KEY_l || symbol === Clutter.KEY_L) {
+          this._pixbuf = this._pixbuf.rotate_simple(
+            GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE
+          );
+          this._reOrient(N_AXIS - 1);
+          this._reload();
+        }
+      }
+      return Clutter.EVENT_PROPAGATE;
+    }
+
     _onPress(event, button, sequence) {
-      lg('[UIImageRenderer::_onPress]');
       if (this._dragButton) {
         return Clutter.EVENT_PROPAGATE;
       }
@@ -1135,7 +1304,7 @@ const UIThumbnailViewer = GObject.registerClass(
     _init(params) {
       super._init({
         ...params,
-        y_expand: false
+        y_expand: true
       });
 
       this._scrollView = new St.ScrollView({
@@ -1143,7 +1312,7 @@ const UIThumbnailViewer = GObject.registerClass(
         hscrollbar_policy: St.PolicyType.EXTERNAL,
         vscrollbar_policy: St.PolicyType.EXTERNAL,
         enable_mouse_scrolling: true,
-        y_expand: false
+        y_expand: true
       });
       this.add_child(this._scrollView);
       this._scrollView.set_overlay_scrollbars(false);
@@ -1179,22 +1348,32 @@ const UIThumbnailViewer = GObject.registerClass(
         this.emit('replace', widget._filename);
       });
       shot.connect('delete', (widget) => {
-        this._viewBox.remove_actor(widget);
-        const nextShot = this._viewBox.get_child_at_index(0);
-        this.emit('replace', nextShot?._filename ?? null);
+        this._removeShot(widget).then((filename) => {
+          const nextShot = this._viewBox.get_child_at_index(0);
+          this.emit('replace', nextShot?._filename ?? null);
+          GLib.unlink(filename);
+        });
       });
-      this._viewBox.add_actor(shot);
-      if (this._viewBox.get_children().length === 1) {
-        this.emit('replace', newShot);
-      }
+      this._viewBox.insert_child_at_index(shot, 0);
+      this.emit('replace', newShot);
     }
 
-    _removeShot(widget) {
-      widget.ease({
-        opacity: 0,
-        duration: 200,
-        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        onComplete: () => this._viewBox.remove_actor(widget)
+    _shotCount() {
+      return this._viewBox.get_children().length;
+    }
+
+    async _removeShot(widget) {
+      return new Promise((resolve, reject) => {
+        widget.ease({
+          opacity: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => {
+            const file = widget._filename;
+            this._viewBox.remove_actor(widget);
+            resolve(file);
+          }
+        });
       });
     }
 

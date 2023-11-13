@@ -214,6 +214,20 @@
 }
 
 .pixzzle-ui-snap-indicator {
-    border: 1px solid #44C4C7;
-    background-color: rgba(72, 224, 227, 0.4);
+  border: 1px solid #44c4c7;
+  background-color: rgba(72, 224, 227, 0.4);
+}
+
+#UIButtonBox {
+  spacing: 1em;
+}
+
+.pixzzle-ui-settings-button {
+  color: white;
+  background-color: rgba(0, 0, 0, .2);
+  padding: 4px;
+  border-radius: 99px;
+}
+.pixzzle-ui-settings-button StIcon {
+  icon-size: 1.7em;
 }
