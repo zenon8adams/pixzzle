@@ -29,16 +29,19 @@ const {
   Gdk,
   GdkPixbuf
 } = imports.gi;
-const Cairo = imports.cairo;
 
+const Cairo = imports.cairo;
+const Util = imports.misc.util;
 const File = Gio.File;
 const Main = imports.ui.main;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
-const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE, Panel } =
+const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE } =
   Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
+const { Panel } = Me.imports.panel;
+const Prefs = Me.imports.prefs;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
@@ -46,9 +49,14 @@ const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const FULLY_OPAQUE = 255;
 
+const SETTING_KEY_CLEAR_HISTORY = 'clear-history';
+let SETTING_SWAP_VIEWS;
+let SETTING_DISABLE_TILE_MODE;
+let SETTING_NATURAL_PANNING;
+
 const ViewMode = Object.freeze({
   ADAPTIVE: Symbol('adaptive'),
-  FREE: Symbol('free')
+  TILE: Symbol('tile')
 });
 var UIMainViewer = GObject.registerClass(
   {
@@ -77,6 +85,7 @@ var UIMainViewer = GObject.registerClass(
 
       this._isActive = false;
       this._viewMode = ViewMode.ADAPTIVE;
+      this._tilingDisabled = false;
       this._emptyView = true;
 
       Main.layoutManager.addTopChrome(this);
@@ -147,6 +156,14 @@ var UIMainViewer = GObject.registerClass(
         y_align: Clutter.ActorAlign.CENTER
       });
 
+      this._buttonBox = new UILayout({
+        name: 'UIButtonBox',
+        vertical: false,
+        x_expand: true,
+        x_align: Clutter.ActorAlign.END
+      });
+      this._topMostContainer.add_child(this._buttonBox);
+
       this._settingsButton = new St.Button({
         style_class: 'pixzzle-ui-settings-button',
         label: 'settings',
@@ -156,17 +173,13 @@ var UIMainViewer = GObject.registerClass(
         x_align: Clutter.ActorAlign.CENTER,
         rotation_angle_z: 0
       });
-      this._settingsButton.set_pivot_point(0.5, 0.5);
-      this._buttonBox = new UILayout({
-        name: 'UIButtonBox',
-        vertical: false,
-        x_expand: true,
-        x_align: Clutter.ActorAlign.END
-      });
-      this._topMostContainer.add_child(this._buttonBox);
       this._buttonBox.add_child(this._settingsButton);
+      this._settingsButton.set_pivot_point(0.5, 0.5);
       this._settingsButton.connect('notify::hover', () => {
         this._animateSettings();
+      });
+      this._settingsButton.connect('clicked', () => {
+        this._openSettings();
       });
 
       this._screenshotButton = new St.Button({
@@ -260,20 +273,9 @@ var UIMainViewer = GObject.registerClass(
       });
       Main.layoutManager.addChrome(this._snapIndicator);
 
-      this._settings = inflateSettings();
-
-      const uiModes = Shell.ActionMode.ALL & ~Shell.ActionMode.LOGIN_SCREEN;
-      Main.wm.removeKeybinding(SCREENSHOT_KEY);
-      Main.wm.addKeybinding(
-        SCREENSHOT_KEY,
-        this._settings,
-        Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
-        uiModes,
-        this._toggleUI.bind(this)
-      );
-
+      this._loadSettings();
       this.connect('notify::mapped', () => {
-          this._animateSettings();
+        this._animateSettings();
       });
 
       this.connect('destroy', this._onDestroy.bind(this));
@@ -287,7 +289,7 @@ var UIMainViewer = GObject.registerClass(
       } else {
         this._snapIndicator.set_position(x, y);
         this._snapIndicator.set_size(w, h);
-        this._viewMode = ViewMode.FREE;
+        this._viewMode = ViewMode.TILE;
         this._snapIndicator.show();
       }
     }
@@ -389,6 +391,167 @@ var UIMainViewer = GObject.registerClass(
       });
     }
 
+    _openSettings() {
+      if (this._settingsWindow()) {
+        this._closeSettings();
+        return;
+      }
+
+      if (typeof ExtensionUtils.openPrefs === 'function') {
+        ExtensionUtils.openPrefs();
+      } else {
+        Util.spawn(['gnome-shell-extension-prefs', Me.uuid]);
+      }
+    }
+
+    _settingsWindow() {
+      const windows = global.display.list_all_windows();
+      const appName = Me.metadata.name;
+      const settingsWindow = windows.find((win) => win.title === appName);
+      return settingsWindow;
+    }
+
+    _closeSettings() {
+      this._settingsWindow()?.kill();
+      this._settingsOpen = false;
+    }
+
+    _loadSettings() {
+      this._settings = inflateSettings();
+      this._shortcutsBindingIds = [];
+      this._settingsChangedId = this._settings.connect(
+        'changed',
+        this._onSettingsChange.bind(this)
+      );
+      this._updateSettings();
+      this._bindShortcuts();
+    }
+
+    _onSettingsChange() {
+      this._updateSettings();
+      this._bindShortcuts();
+      lg('[UIMainViewer::_onSettingsChange]');
+    }
+
+    _updateSettings() {
+      const mainBGColor = getColorSetting(
+        Prefs.Fields.MAIN_BG_COLOR,
+        this._settings
+      );
+      const thumbnailBGColor = getColorSetting(
+        Prefs.Fields.THUMBNAIL_BG_COLOR,
+        this._settings
+      );
+      const screenshotButtonBGColor = getColorSetting(
+        Prefs.Fields.SHOTBUTTON_BG_COLOR,
+        this._settings
+      );
+      const screenshotButtonFGColor = getColorSetting(
+        Prefs.Fields.SHOTBUTTON_FG_COLOR,
+        this._settings
+      );
+
+      setBGColor(this, mainBGColor);
+      setBGColor(this._thumbnailView, thumbnailBGColor);
+      setBGColor(this._screenshotButton, screenshotButtonBGColor);
+      setFGColor(this._screenshotButton, screenshotButtonFGColor);
+
+      const swapViews = this._settings.get_int(Prefs.Fields.SWAP_VIEWS);
+      if (swapViews !== SETTING_SWAP_VIEWS) {
+        this._splitViewXContainer.set_child_above_sibling(
+          ...this._splitViewXContainer.get_children()
+        );
+      }
+
+      this._tilingDisabled = this._settings.get_boolean(
+        Prefs.Fields.DISABLE_TILE_MODE
+      );
+
+      this._bindSettings();
+
+      function getColorSetting(id, settings) {
+        let colors = settings.get_strv(id);
+        const color = colors
+          .map((c, i) => (i < 3 ? c * FULLY_OPAQUE : c))
+          .join(',');
+        return 'rgba(' + color + ')';
+      }
+      function setBGColor(obj, color) {
+        addStyle(obj, 'background-color', color);
+      }
+      function setFGColor(obj, color) {
+        addStyle(obj, 'color', color);
+      }
+      function addStyle(obj, prop, value) {
+        let style = obj.get_style() ?? '';
+        if (style.length !== 0) style += ';';
+        style += `${prop}: ${value}`;
+        style = uniquefy(style);
+        obj.set_style(style);
+      }
+
+      function uniquefy(pattern) {
+        const sections = pattern.split(';');
+        const obj = {};
+        for (const section of sections) {
+          const divider = section.indexOf(':');
+          const key = section.slice(0, divider);
+          const value = section.slice(divider + 1);
+          if (!key || !value) continue;
+          Object.assign(obj, { ...obj, [key]: value });
+        }
+
+        const unique = Object.entries(obj).reduce(
+          (acc, [k, v]) =>
+            acc.length === 0 ? k + ':' + v : acc + ';' + k + ':' + v,
+          ''
+        );
+
+        return unique;
+      }
+    }
+
+    _bindSettings() {
+      SETTING_SWAP_VIEWS = this._settings.get_int(Prefs.Fields.SWAP_VIEWS);
+      SETTING_DISABLE_TILE_MODE = this._settings.get_boolean(
+        Prefs.Fields.DISABLE_TILE_MODE
+      );
+      SETTING_NATURAL_PANNING = this._settings.get_boolean(
+        Prefs.Fields.NATURAL_PANNING
+      );
+    }
+
+    _bindShortcuts() {
+      this._unbindShortcuts();
+
+      this._bindShortcut(
+        Prefs.Fields.TOGGLE_VISIBILITY,
+        this._toggleUI.bind(this)
+      );
+    }
+
+    _unbindShortcuts() {
+      this._shortcutsBindingIds.forEach((id) => Main.wm.removeKeybinding(id));
+      this._shortcutsBindingIds = [];
+    }
+
+    _bindShortcut(name, cb) {
+      const ModeType = Shell.hasOwnProperty('ActionMode')
+        ? Shell.ActionMode
+        : Shell.KeyBindingMode;
+
+      const uiModes = Shell.ActionMode.ALL & ~Shell.ActionMode.LOGIN_SCREEN;
+      Main.wm.addKeybinding(
+        name,
+        this._settings,
+        Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+        uiModes,
+        cb.bind(this)
+      );
+
+      this._shortcutsBindingIds.push(name);
+    }
+
     _reload_theme() {
       const theme_context = St.ThemeContext.get_for_stage(global.stage);
       const theme = theme_context.get_theme();
@@ -408,6 +571,7 @@ var UIMainViewer = GObject.registerClass(
         this._stopDrag();
       }
       this._isActive = false;
+      this._closeSettings();
       this.ease({
         opacity: 0,
         duration: 200,
@@ -423,6 +587,7 @@ var UIMainViewer = GObject.registerClass(
       }
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
+      this._unbindShortcuts();
     }
 
     _showUI() {
@@ -454,6 +619,8 @@ var UIMainViewer = GObject.registerClass(
         this.opacity = newOpacity;
         if (!this._isActive) {
           this.show();
+        } else {
+          this._closeSettings();
         }
         this.ease({
           opacity: FULLY_OPAQUE - newOpacity,
@@ -668,7 +835,7 @@ var UIMainViewer = GObject.registerClass(
 
       const [x, y] = [event.x, event.y];
       this._updateCursor(x, y);
-      if (this._viewMode === ViewMode.FREE) {
+      if (this._viewMode === ViewMode.TILE) {
         this._updateSizeFromIndicator();
       }
 
@@ -773,13 +940,13 @@ var UIMainViewer = GObject.registerClass(
       }
 
       if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
-        const isFreeMode = this._viewMode === ViewMode.FREE;
+        const isTileMode = this._viewMode === ViewMode.TILE;
         const [x, y, w, h] = this._getGeometry();
         const [minWidth, minHeight, maxWidth, maxHeight] = [
           INITIAL_WIDTH,
           INITIAL_HEIGHT,
-          isFreeMode ? monitorWidth : this._maxXSwing ?? this.width,
-          isFreeMode ? monitorHeight : this._maxYSwing ?? this.height
+          isTileMode ? monitorWidth : this._maxXSwing ?? this.width,
+          isTileMode ? monitorHeight : this._maxYSwing ?? this.height
         ];
 
         if (w < minWidth) {
@@ -822,7 +989,8 @@ var UIMainViewer = GObject.registerClass(
         }
       } else if (
         cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW &&
-        !this._emptyView
+        !this._emptyView &&
+        !this._tilingDisabled
       ) {
         const leftTorque = monitorWidth / 2 - x;
         const rightTorque = x - monitorWidth / 2;
@@ -1203,8 +1371,9 @@ const UIImageRenderer = GObject.registerClass(
         this._pixbuf.get_height()
       ];
 
+      const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
       if (maxWidth > this.width) {
-        this._xpos += -dx;
+        this._xpos += panDirection * dx;
         if (this._xpos < 0) {
           const overshootX = -this._xpos;
           this._xpos += overshootX;
@@ -1220,7 +1389,7 @@ const UIImageRenderer = GObject.registerClass(
       }
 
       if (maxHeight > this.height) {
-        this._ypos += -dy;
+        this._ypos += panDirection * dy;
         if (this._ypos < 0) {
           const overshootY = -this._ypos;
           this._ypos += overshootY;

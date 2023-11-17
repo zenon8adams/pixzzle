@@ -1,6 +1,5 @@
 const { Gio, GLib } = imports.gi;
 
-const Main = imports.ui.main;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
@@ -10,7 +9,7 @@ var SCREENSHOT_KEY = 'take-screenshot';
 const debug = true;
 function lg() {
   if (debug) {
-    log('[' + SCHEMA_NAME + '] ', ...arguments);
+    log('[' + SCHEMA_NAME + '] ' + Array.from(arguments).join(', '));
   }
 }
 
@@ -55,25 +54,3 @@ var SHOT_STORE = _getShotStore(
   SCHEMA_NAME
 );
 
-function computePanelPosition() {
-  const invisible = { x: 0, y: 0, width: 0, height: 0 };
-  if (Main.layoutManager.primaryIndex === -1) {
-    return invisible;
-  }
-
-  const monitor = Main.layoutManager.monitors[Main.layoutManager.primaryIndex];
-  const panel = Main.panel;
-  const isTop = panel.x === monitor.x && panel.width === monitor.width;
-  const isRight = panel.x > monitor.x && panel.height === monitor.height;
-  const isBottom = panel.y > monitor.y && panel.width === monitor.width;
-  const isLeft = panel.x === monitor.x && panel.height === monitor.height;
-
-  return {
-    Top: isTop ? panel : invisible,
-    Right: isRight ? panel : invisible,
-    Bottom: isBottom ? panel : invisible,
-    Left: isLeft ? panel : invisible
-  };
-}
-
-var Panel = computePanelPosition();
