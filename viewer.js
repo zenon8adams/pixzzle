@@ -1,4 +1,4 @@
-/* extension.js
+/* viewer.js
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,7 +50,6 @@ const EDGE_THRESHOLD = 2;
 const FULLY_OPAQUE = 255;
 
 const SETTING_KEY_CLEAR_HISTORY = 'clear-history';
-let SETTING_SWAP_VIEWS;
 let SETTING_DISABLE_TILE_MODE;
 let SETTING_NATURAL_PANNING;
 
@@ -150,6 +149,7 @@ var UIMainViewer = GObject.registerClass(
       this._topMostContainer.add_child(this._splitViewXContainer);
 
       this._bigViewContainer = new UILayout({
+        name: 'UIBigViewLayout',
         x_expand: true,
         y_expand: false,
         x_align: Clutter.ActorAlign.CENTER,
@@ -193,7 +193,6 @@ var UIMainViewer = GObject.registerClass(
         this._showScreenshotView()
       );
 
-      lg('[UIMainViewer::_init]', 'width:', this._screenshotButton.width);
       this._thumbnailView = new UIThumbnailViewer({
         name: 'UIThumbnailViewer',
         x_expand: false
@@ -456,8 +455,11 @@ var UIMainViewer = GObject.registerClass(
       setBGColor(this._screenshotButton, screenshotButtonBGColor);
       setFGColor(this._screenshotButton, screenshotButtonFGColor);
 
-      const swapViews = this._settings.get_int(Prefs.Fields.SWAP_VIEWS);
-      if (swapViews !== SETTING_SWAP_VIEWS) {
+      const viewIndex = this._settings.get_int(Prefs.Fields.SWAP_VIEWS);
+      const views = [this._bigViewContainer.name, this._thumbnailView.name];
+      const firstChild = this._splitViewXContainer.get_first_child();
+      const firstChildIndex = views.findIndex((v) => v == firstChild.name);
+      if (firstChildIndex !== viewIndex) {
         this._splitViewXContainer.set_child_above_sibling(
           ...this._splitViewXContainer.get_children()
         );
@@ -512,7 +514,6 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _bindSettings() {
-      SETTING_SWAP_VIEWS = this._settings.get_int(Prefs.Fields.SWAP_VIEWS);
       SETTING_DISABLE_TILE_MODE = this._settings.get_boolean(
         Prefs.Fields.DISABLE_TILE_MODE
       );

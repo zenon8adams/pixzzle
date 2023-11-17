@@ -20,7 +20,7 @@ const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
 const { UIMainViewer } = Me.imports.viewer;
-const {lg} = Me.imports.utils;
+const { lg } = Me.imports.utils;
 
 class Extension {
   constructor(uuid) {
