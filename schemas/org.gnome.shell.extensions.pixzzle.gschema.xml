@@ -1,11 +1,82 @@
 <schemalist gettext-domain="gnome-shell-extensions">
   <schema id="org.gnome.shell.extensions.pixzzle"
       path="/org/gnome/shell/extensions/pixzzle/">
-    <key name="take-screenshot" type="as">
+    <key name="toggle-visibility" type="as">
       <default><![CDATA[['<Ctrl>F9']]]></default>
       <summary>Open screenshot</summary>
       <description>
         Key to open shutter
+      </description>
+    </key>
+    <key name="rotate-shot-clockwise" type="as">
+      <default><![CDATA[['<Ctrl>R']]]></default>
+      <summary>Rotate shot clockwise</summary>
+      <description>
+        Rotate screenshot view clockwise
+      </description>
+    </key>
+    <key name="rotate-shot-anticlockwise" type="as">
+      <default><![CDATA[['<Ctrl>L']]]></default>
+      <summary>Rotate shot anti-clockwise</summary>
+      <description>
+        Rotate screenshot view anti-clockwise
+      </description>
+    </key>
+    <key name="main-bg-color" type="as">
+      <default>['0.00','0.00','0.00','0.50']</default>
+      <summary>Choose a contrasting background color</summary>
+      <description>    
+        Choose a background color based on the page currently
+        being navigated.
+      </description>    
+    </key>
+    <key name="thumbnail-bg-color" type="as">
+      <default>['0.00','0.00','0.00','0.30']</default>
+      <summary>Choose a contrasting background color</summary>
+      <description>    
+        Choose a background color based on the page currently
+        being navigated.
+      </description>
+    </key>
+    <key name="shotbutton-bg-color" type="as">
+      <default>['0.313','0.478','0.725','1.00']</default>
+      <summary>Choose shot button background color</summary>
+      <description>    
+        Set the background color for the screenshot
+        toggle button.
+      </description>
+    </key>
+    <key name="shotbutton-fg-color" type="as">
+      <default>['0.984','0.972','0.965','1.00']</default>
+      <summary>Choose shot button foreground color</summary>
+      <description>    
+        Set the foreground color for the screenshot
+        toggle button.
+      </description>
+    </key>
+    <key name="swap-views" type="i">
+      <default>0</default>
+      <summary>Reorder the layout of views</summary>
+      <description>    
+        Swap the order of main view and thumbnail view for
+        improve user experience.
+      </description>
+      <range min="0" max="1"/>
+    </key>
+    <key name="disable-tile-mode" type="b">
+      <default>true</default>
+      <summary>Prevent window from tiling</summary>
+      <description>    
+        Disable tiling of window on dragging to edge. 
+      </description>
+    </key>
+    <key name="natural-panning" type="b">
+      <default>true</default>
+      <summary>Pan big view naturally</summary>
+      <description>    
+        Set the panning for the image viewer to
+        the natural panning direction (i.e it should
+        follow the drag direction).
       </description>
     </key>
   </schema>
