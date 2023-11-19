@@ -267,7 +267,7 @@ const SettingsApp = new Lang.Class({
     addRow(shotButtonBGColor, this.field_shot_button_bg_color);
     addRow(shotButtonFGColor, this.field_shot_button_fg_color);
     addRow(swapViewsLabel, this.field_swap_views);
-    addRow(disableTileLabel, this.field_tile_mode);
+ //   addRow(disableTileLabel, this.field_tile_mode);
     addRow(naturalPanLabel, this.field_natural_panning);
     addRow(null, this.field_keybinding);
     addRow(null, bindWarningLabel);
