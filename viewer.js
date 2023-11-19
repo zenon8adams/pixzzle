@@ -37,7 +37,10 @@ const Main = imports.ui.main;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
-const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE } =
+const Gettext = imports.gettext;
+const _ = Gettext.domain('pixzzle').gettext;
+
+const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } =
   Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
 const { Panel } = Me.imports.panel;
@@ -49,7 +52,6 @@ const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const FULLY_OPAQUE = 255;
 
-const SETTING_KEY_CLEAR_HISTORY = 'clear-history';
 let SETTING_DISABLE_TILE_MODE;
 let SETTING_NATURAL_PANNING;
 
@@ -130,7 +132,12 @@ var UIMainViewer = GObject.registerClass(
           factor: 0
         })
       );
-      this._closeButton.connect('clicked', () => this._close());
+      this._closeButton.connect('clicked', this._close.bind(this));
+      /*\
+       * vfunc_release_event is not triggered if we drag into the
+       * zone of a reactive widget. We forcefully stop drag.
+      \*/
+      this._closeButton.connect('enter-event', this._stopDrag.bind(this));
       this.add_child(this._closeButton);
 
       this._topMostContainer = new UILayout({
@@ -181,10 +188,11 @@ var UIMainViewer = GObject.registerClass(
       this._settingsButton.connect('clicked', () => {
         this._openSettings();
       });
+      this._settingsButton.connect('enter-event', this._stopDrag.bind(this));
 
       this._screenshotButton = new St.Button({
         style_class: 'pixzzle-ui-screenshot-button',
-        label: 'Add New',
+        label: _('Add New'),
         x_expand: false,
         x_align: Clutter.ActorAlign.END
       });
@@ -192,6 +200,7 @@ var UIMainViewer = GObject.registerClass(
       this._screenshotButton.connect('clicked', () =>
         this._showScreenshotView()
       );
+      this._screenshotButton.connect('enter-event', this._stopDrag.bind(this));
 
       this._thumbnailView = new UIThumbnailViewer({
         name: 'UIThumbnailViewer',
@@ -201,6 +210,7 @@ var UIMainViewer = GObject.registerClass(
         this._imageViewer._replace(filename);
         this._emptyView = this._thumbnailView._shotCount() == 0;
       });
+      this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
 
       this._splitViewXContainer.add_child(this._bigViewContainer);
       this._splitViewXContainer.add_child(this._thumbnailView);
@@ -262,6 +272,7 @@ var UIMainViewer = GObject.registerClass(
         this._updateSize();
         this._emptyView = true;
       });
+      this._imageViewer.connect('enter-event', this._stopDrag.bind(this));
       this._bigViewContainer.add_child(this._imageViewer);
 
       this._snapIndicator = new St.Widget({
@@ -282,20 +293,8 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _updateSnapIndicator(x, y, w, h) {
-      if (x === 0 && y === 0 && w === 0 && h === 0) {
-        this._snapIndicator.hide();
-        this._viewMode = ViewMode.ADAPTIVE;
-      } else {
-        this._snapIndicator.set_position(x, y);
-        this._snapIndicator.set_size(w, h);
-        this._viewMode = ViewMode.TILE;
-        this._snapIndicator.show();
-      }
-    }
-
-    _updateSizeFromIndicator() {
-      if (!this._originalGeometry) {
-        this._originalGeometry = [
+      if (!this._adaptiveGeometry || this._viewMode === ViewMode.ADAPTIVE) {
+        this._adaptiveGeometry = [
           this._startX,
           this._startY,
           this._lastX,
@@ -303,24 +302,45 @@ var UIMainViewer = GObject.registerClass(
         ];
       }
 
-      if (this._dragCursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
+      if (x === 0 && y === 0 && w === 0 && h === 0) {
+        this._snapIndicator.hide();
+      } else {
+        this._snapIndicator.set_position(x, y);
+        this._snapIndicator.set_size(w, h);
+        this._snapIndicator.show();
+      }
+    }
+
+    _updateSizeFromIndicator() {
+      if (this._tilingDisabled) {
+        return;
+      }
+      let updateView = false;
+      if (this._snapIndicator.visible) {
         this._startX = this._snapIndicator.x;
         this._lastX = this._snapIndicator.x + this._snapIndicator.width - 1;
         this._startY = this._snapIndicator.y;
         this._lastY = this._snapIndicator.y + this._snapIndicator.height - 1;
+        this._viewMode = ViewMode.TILE;
+        updateView = true;
       } else if (
+        this._adaptiveGeometry &&
+        this._viewMode === ViewMode.TILE &&
         this._startX > EDGE_THRESHOLD &&
         this._startY > EDGE_THRESHOLD &&
         this._activeMonitor.width - this._lastX > EDGE_THRESHOLD
       ) {
         [this._startX, this._startY, this._lastX, this._lastY] =
-          this._originalGeometry;
+          this._adaptiveGeometry;
         this._viewMode = ViewMode.ADAPTIVE;
-        this._originalGeometry = 0;
+        this._adaptiveGeometry = null;
+        updateView = true;
       }
 
-      this._updateSize();
-      this._imageViewer._redraw(0, 0);
+      if (updateView) {
+        this._updateSize();
+        this._imageViewer._redraw(0, 0);
+      }
       this._snapIndicator.hide();
     }
 
@@ -836,9 +856,7 @@ var UIMainViewer = GObject.registerClass(
 
       const [x, y] = [event.x, event.y];
       this._updateCursor(x, y);
-      if (this._viewMode === ViewMode.TILE) {
-        this._updateSizeFromIndicator();
-      }
+      this._updateSizeFromIndicator();
 
       return Clutter.EVENT_STOP;
     }
@@ -1075,7 +1093,7 @@ var UIMainViewer = GObject.registerClass(
       return this._onMotion(event, null);
     }
 
-    vfunc_touch_event(event) {
+    /*vfunc_touch_event(event) {
       const eventType = event.type;
       if (eventType === Clutter.EventType.TOUCH_BEGIN)
         return this._onPress(event, 'touch', event.get_event_sequence());
@@ -1085,14 +1103,16 @@ var UIMainViewer = GObject.registerClass(
         return this._onMotion(event, event.get_event_sequence());
 
       return Clutter.EVENT_PROPAGATE;
-    }
+    } */
 
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
       global.stage.set_key_focus(null);
+      this._updateSizeFromIndicator();
       if (this._dragButton) {
         return this._onMotion(event, null);
       } else {
+        this._dragButton = 0;
         global.display.set_cursor(Meta.Cursor.DEFAULT);
       }
 

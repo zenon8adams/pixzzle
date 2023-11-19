@@ -22,7 +22,6 @@ const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
 var SCHEMA_NAME = 'org.gnome.shell.extensions.pixzzle';
-var SCREENSHOT_KEY = 'take-screenshot';
 
 const debug = true;
 function lg() {

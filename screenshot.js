@@ -43,7 +43,7 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE } =
+const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } =
   Me.imports.utils;
 
 const IconLabelButton = GObject.registerClass(
