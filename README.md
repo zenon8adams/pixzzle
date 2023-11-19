@@ -2,6 +2,9 @@
 Explore Pixzzle for effortless and engaging screen capturing
 
 Pixzzle is a dynamic GNOME extension written in GJS (GNOME JavaScript) that elevates your screenshot experience within the GNOME desktop environment. This extension empowers users to capture specific screen sections and explore them interactively by scrolling past their captured views, all while seamlessly integrating with the GNOME ecosystem.
+
+![Screenshot](https://github.com/zenon8adams/pixzzle/blob/dev/screenshot.png)  
+
 ## Key Features
 
 * Precise Screen Capture: Pixzzle allows GNOME users to take precise screenshots of specific areas within their desktop environment, ensuring that only the desired content is captured.
