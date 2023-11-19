@@ -23,7 +23,7 @@ const Me = ExtensionUtils.getCurrentExtension();
 
 var SCHEMA_NAME = 'org.gnome.shell.extensions.pixzzle';
 
-const debug = true;
+const debug = false;
 function lg() {
   if (debug) {
     log('[' + SCHEMA_NAME + '] ' + Array.from(arguments).join(', '));
