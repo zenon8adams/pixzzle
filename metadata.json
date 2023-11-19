@@ -1,10 +1,12 @@
 {
   "name": "pixzzle",
-  "description": "Explore Pixlzzle for effortless and engaging screen capturing",
+  "description": "Your interactive screenshot manager",
   "uuid": "pixzzle@zenon8adams.gmail.com",
-  "schema_name": "org.gnome.extensions.pixzzle",
+  "schema_name": "org.gnome.shell.extensions.pixzzle",
   "gettext-domain": "pixzzle",
   "shell-version": [
     "42"
-  ]
+  ],
+  "url": "https://github.com/zenon8adams/pixzzle",
+  "version": 1
 }

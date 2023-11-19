@@ -1,157 +1,251 @@
+/* stylesheet.css      
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 .pixzzle-ui-panel {
-	border-radius: 29px;
-	padding: 18px;
-	padding-bottom: 12px;
-	margin-bottom: 4em;
-	spacing: 12px;
+  border-radius: 29px;
+  padding: 18px;
+  padding-bottom: 12px;
+  margin-bottom: 4em;
+  spacing: 12px;
 }
 
 .pixzzle-ui-close-button {
-    border-radius: 99px;
-    color: #eee;
-    background-color: #c97657;
+  border-radius: 99px;
+  color: #eee;
+  background-color: #c97657;
+}
+
+.pixzzle-ui-close-button StIcon {
+  icon-size: 2em;
 }
 
 .pixzzle-ui-close-button.left {
-	margin-left: 8px;
+  margin-left: 8px;
 }
 
 .pixzzle-ui-close-button.right {
-	margin-right: 8px;
+  margin-right: 8px;
 }
 
 .pixzzle-ui-type-button {
-	padding: 12px 18px !important;
-	border-radius: 11px;
-	color: #EDEDED !important;
+  padding: 12px 18px !important;
+  border-radius: 11px;
+  color: #ededed !important;
 }
 
 .pixzzle-ui-type-button:hover,
 .pixzzle-ui-type-button:focus,
 .pixzzle-ui-type-button:checked {
-	background-color: rgba(237, 237, 237, 0.15) !important;
+  background-color: rgba(237, 237, 237, 0.15) !important;
 }
 
 .pixzzle-ui-type-button:checked:hover {
-	background-color: rgba(237, 237, 237, 0.5) !important;
+  background-color: rgba(237, 237, 237, 0.5) !important;
 }
 
 .pixzzle-ui-type-button:active {
-	background-color: rgba(237, 237, 237, 0.3) !important;
+  background-color: rgba(237, 237, 237, 0.3) !important;
 }
 
 .pixzzle-ui-type-button:insensitive {
-	color: rgba(238, 238, 236, 0.2) !important;
+  color: rgba(238, 238, 236, 0.2) !important;
 }
 
 .pixzzle-ui-capture-button {
-	width: 36px;
-	height: 36px;
-	border-radius: 99px;
-	border: 4px #eeeeec;
-	padding: 4px;
+  width: 36px;
+  height: 36px;
+  border-radius: 99px;
+  border: 4px #eeeeec;
+  padding: 4px;
 }
 
 .pixzzle-ui-capture-button .pixzzle-ui-capture-button-circle {
-	background-color: #eeeeec;
-	transition-duration: 200ms;
-	border-radius: 99px;
+  background-color: #eeeeec;
+  transition-duration: 200ms;
+  border-radius: 99px;
 }
 
 .pixzzle-ui-capture-button .pixzzle-ui-capture-button-circle:hover,
 .pixzzle-ui-capture-button .pixzzle-ui-capture-button-circle:focus {
-	background-color: #0a0a0a;
+  background-color: #0a0a0a;
 }
 
 .pixzzle-ui-capture-button:hover .pixzzle-ui-capture-button-circle,
 .pixzzle-ui-capture-button:focus .pixzzle-ui-capture-button-circle {
-	background-color: white;
+  background-color: white;
 }
 
 .pixzzle-ui-capture-button:active .pixzzle-ui-capture-button-circle {
-	background-color: white;
+  background-color: white;
 }
 
 .pixzzle-ui-capture-button:cast .pixzzle-ui-capture-button-circle {
-	background-color: #E56A54;
+  background-color: #e56a54;
 }
 
 .pixzzle-ui-capture-button:cast:hover .pixzzle-ui-capture-button-circle,
 .pixzzle-ui-capture-button:cast:focus .pixzzle-ui-capture-button-circle {
-	background-color: #cd3a1f;
+  background-color: #cd3a1f;
 }
 
 .pixzzle-ui-capture-button:cast:active .pixzzle-ui-capture-button-circle {
-	background-color: #8b2715;
+  background-color: #8b2715;
 }
 
 .pixzzle-ui-show-pointer-button {
-	border-radius: 99px;
-	padding: 12px !important;
-	color: #EDEDED !important;
+  border-radius: 99px;
+  padding: 12px !important;
+  color: #ededed !important;
 }
 
 .pixzzle-ui-show-pointer-button StIcon {
-	icon-size: 1.09em;
+  icon-size: 1.09em;
 }
 
 .pixzzle-ui-show-pointer-button:hover,
 .pixzzle-ui-show-pointer-button:focus,
 .pixzzle-ui-show-pointer-button:checked {
-	background-color: rgba(237, 237, 237, 0.15) !important;
+  background-color: rgba(237, 237, 237, 0.15) !important;
 }
 
 .pixzzle-ui-show-pointer-button:checked:hover {
-	background-color: rgba(237, 237, 237, 0.5) !important;
+  background-color: rgba(237, 237, 237, 0.5) !important;
 }
 
 .pixzzle-ui-show-pointer-button:active {
-	background-color: rgba(237, 237, 237, 0.3) !important;
+  background-color: rgba(237, 237, 237, 0.3) !important;
 }
 
 .pixzzle-ui-area-indicator-shade {
-	background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(0, 0, 0, 0.3);
 }
 
-.pixzzle-ui-area-selector .pixzzle-ui-area-indicator-shade, .pixzzle-ui-panel {
-	background-color: rgba(0, 0, 0, 0.5);
+.pixzzle-ui-area-selector .pixzzle-ui-area-indicator-shade,
+.pixzzle-ui-panel,
+#UIMainViewer {
+  background-color: rgba(0, 0, 0, 0.5);
 }
 
 .pixzzle-ui-area-selector .pixzzle-ui-area-indicator-selection {
-	border: 2px white;
+  border: 2px white;
 }
 
 .pixzzle-ui-area-selector-handle {
-	border-radius: 99px;
-	background-color: white;
-	box-shadow: 0 1px 3px 2px rgba(0, 0, 0, 0.2);
-	width: 24px;
-	height: 24px;
+  border-radius: 99px;
+  background-color: white;
+  box-shadow: 0 1px 3px 2px rgba(0, 0, 0, 0.2);
+  width: 24px;
+  height: 24px;
 }
 
 .pixzzle-ui-screen-selector {
-	transition-duration: 200ms;
-	background-color: rgba(0, 0, 0, 0.5);
+  transition-duration: 200ms;
+  background-color: rgba(0, 0, 0, 0.5);
 }
 
 .pixzzle-ui-screen-selector:hover {
-	background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(0, 0, 0, 0.3);
 }
 
 .pixzzle-ui-screen-selector:active {
-	background-color: rgba(0, 0, 0, 0.7);
+  background-color: rgba(0, 0, 0, 0.7);
 }
 
 .pixzzle-ui-screen-selector:checked {
-	background-color: transparent;
-	border: 2px white;
+  background-color: transparent;
+  border: 2px white;
 }
 
 .pixzzle-ui-tooltip {
-	color: #eeeeec;
-	background-color: #2e3436;
-	border-radius: 99px;
-	padding: 6px 12px;
-	text-align: center;
-	-y-offset: 24px;
+  color: #eeeeec;
+  background-color: #2e3436;
+  border-radius: 99px;
+  padding: 6px 12px;
+  text-align: center;
+  -y-offset: 24px;
+}
+
+#UIMainViewer {
+  border-radius: 10px;
+  border-width: 2em;
+  border-bottom: 0px;
+}
+
+#UIMainViewerLayout {
+  spacing: 1.5em;
+  padding-bottom: 2em;
+}
+
+#UISplitViewLayout {
+  spacing: 1em;
+}
+
+.pixzzle-ui-base-container,
+#UIThumbnailViewer {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+}
+
+#UIThumbnailViewer {
+  width: 10em;
+  max-width: 10em;
+}
+
+.pixzzle-ui-screenshot-button {
+  padding: 8px 20px;
+  border-radius: 6px;
+  color: #fbf8f6;
+  background-color: #507ab9;
+}
+.pixzzle-ui-screenshot-button:hover {
+  background-color: #5280c4;
+}
+
+.pixzzle-ui-thumbnail-scrollview {
+  border-top: 0.6em;
+  border-bottom: 0.6em;
+}
+
+.pixzzle-ui-thumbnail-close-button StIcon {
+  icon-size: 1.2em;
+}
+
+.pixzzle-ui-thumbnail-close-button {
+  border-radius: 99px;
+  color: #eee;
+  background-color: #c97657;
+}
+
+.pixzzle-ui-snap-indicator {
+  border: 1px solid #44c4c7;
+  background-color: rgba(72, 224, 227, 0.4);
+}
+
+#UIButtonBox {
+  spacing: 1em;
+}
+
+.pixzzle-ui-settings-button {
+  color: white;
+  background-color: rgba(0, 0, 0, 0.2);
+  padding: 4px;
+  border-radius: 99px;
+}
+.pixzzle-ui-settings-button StIcon {
+  icon-size: 1.7em;
 }
