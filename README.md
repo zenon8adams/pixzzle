@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://github.com/zenon8adams/pixzzle/blob/dev/logo.png" alt="Logo" />
+</p>
+
 # Pixzzle GNOME Extension
 Your interactive screenshot manager
 
@@ -9,7 +13,7 @@ Pixzzle is a dynamic GNOME extension written in GJS (GNOME JavaScript) that elev
 
 * Precise Screen Capture: Pixzzle allows GNOME users to take precise screenshots of specific areas within their desktop environment, ensuring that only the desired content is captured.
 
-* Intuitive Scrolling Integration: Experience a seamless transition between captured views as you scroll within the GNOME desktop, creating a dynamic and interactive exploration of your screen content.
+* Intuitive Panning Integration: Experience a seamless transition between captured views as you scroll within the GNOME desktop, creating a dynamic and interactive exploration of your screen content.
 
 * Native GNOME Compatibility: Pixzzle is crafted with GJS to seamlessly integrate into the GNOME desktop environment, maintaining a consistent and user-friendly experience.
 
