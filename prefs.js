@@ -16,13 +16,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-imports.gi.versions.Gtk = '3.0';
 const GObject = imports.gi.GObject;
 const Gtk = imports.gi.Gtk;
 const Gdk = imports.gi.Gdk;
 const Gio = imports.gi.Gio;
 const GLib = imports.gi.GLib;
-const Lang = imports.lang;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
@@ -48,243 +46,245 @@ const COLUMN_DESCRIPTION = 1;
 const COLUMN_KEY = 2;
 const COLUMN_MODS = 3;
 
-var SettingsSchema = inflateSettings();
-const PREFS_PATH = Me.dir.get_child('.').get_path();
-
 function init() {
-  let localeDir = Me.dir.get_child('locale');
-  if (localeDir.query_exists(null))
-    Gettext.bindtextdomain('pixzzle', localeDir.get_path());
+  ExtensionUtils.initTranslations();
 }
 
-const SettingsApp = new Lang.Class({
-  Name: 'Pixzzle.App',
-  _init: function () {
-    this.main = new Gtk.Grid({
-      margin_top: 10,
-      margin_bottom: 10,
-      margin_start: 10,
-      margin_end: 10,
-      row_spacing: 12,
-      column_spacing: 18,
-      column_homogeneous: false,
-      row_homogeneous: false
-    });
-    this.field_main_bg_color = new Gtk.ColorButton({
-      use_alpha: true,
-      rgba: buildColor(SettingsSchema.get_strv(Fields.MAIN_BG_COLOR))
-    });
-    this.field_main_bg_color.set_size_request(
-      150,
-      this.field_main_bg_color.get_height()
-    );
-    this.field_main_bg_color.connect('color-set', (button) => {
-      SettingsSchema.set_value(
-        Fields.MAIN_BG_COLOR,
-        GLib.Variant.new_strv(splitColor(button.rgba))
-      );
-    });
+const SettingsApp = GObject.registerClass(
+  class SettingsApp extends GObject.Object {
+    _init() {
+      this.main = new Gtk.Grid({
+        margin_top: 10,
+        margin_bottom: 10,
+        margin_start: 10,
+        margin_end: 10,
+        row_spacing: 12,
+        column_spacing: 18,
+        column_homogeneous: false,
+        row_homogeneous: false
+      });
 
-    this.field_thumbnail_bg_color = new Gtk.ColorButton({
-      use_alpha: true,
-      rgba: buildColor(SettingsSchema.get_strv(Fields.THUMBNAIL_BG_COLOR))
-    });
-    this.field_thumbnail_bg_color.connect('color-set', (button) => {
-      SettingsSchema.set_value(
-        Fields.THUMBNAIL_BG_COLOR,
-        GLib.Variant.new_strv(splitColor(button.rgba))
-      );
-    });
+      const SettingsSchema = inflateSettings();
 
-    this.field_shot_button_bg_color = new Gtk.ColorButton({
-      rgba: buildColor(SettingsSchema.get_strv(Fields.SHOTBUTTON_BG_COLOR))
-    });
-    this.field_shot_button_bg_color.connect('color-set', (button) => {
-      SettingsSchema.set_value(
-        Fields.SHOTBUTTON_BG_COLOR,
-        GLib.Variant.new_strv(splitColor(button.rgba))
+      this.field_main_bg_color = new Gtk.ColorButton({
+        use_alpha: true,
+        rgba: buildColor(SettingsSchema.get_strv(Fields.MAIN_BG_COLOR))
+      });
+      this.field_main_bg_color.set_size_request(
+        150,
+        this.field_main_bg_color.get_height()
       );
-    });
+      this.field_main_bg_color.connect('color-set', (button) => {
+        SettingsSchema.set_value(
+          Fields.MAIN_BG_COLOR,
+          GLib.Variant.new_strv(splitColor(button.rgba))
+        );
+      });
 
-    this.field_shot_button_fg_color = new Gtk.ColorButton({
-      rgba: buildColor(SettingsSchema.get_strv(Fields.SHOTBUTTON_FG_COLOR))
-    });
-    this.field_shot_button_fg_color.connect('color-set', (button) => {
-      SettingsSchema.set_value(
-        Fields.SHOTBUTTON_FG_COLOR,
-        GLib.Variant.new_strv(splitColor(button.rgba))
-      );
-    });
+      this.field_thumbnail_bg_color = new Gtk.ColorButton({
+        use_alpha: true,
+        rgba: buildColor(SettingsSchema.get_strv(Fields.THUMBNAIL_BG_COLOR))
+      });
+      this.field_thumbnail_bg_color.connect('color-set', (button) => {
+        SettingsSchema.set_value(
+          Fields.THUMBNAIL_BG_COLOR,
+          GLib.Variant.new_strv(splitColor(button.rgba))
+        );
+      });
 
-    this.field_swap_views = new Gtk.ComboBox({
-      active: SettingsSchema.get_int(Fields.SWAP_VIEWS),
-      model: this._create_swap_selector_options()
-    });
-    const rendererText = new Gtk.CellRendererText();
-    this.field_swap_views.pack_start(rendererText, false);
-    this.field_swap_views.add_attribute(rendererText, 'text', 0);
-    this.field_swap_views.connect('changed', (box) =>
-      SettingsSchema.set_int(Fields.SWAP_VIEWS, box.active)
-    );
+      this.field_shot_button_bg_color = new Gtk.ColorButton({
+        rgba: buildColor(SettingsSchema.get_strv(Fields.SHOTBUTTON_BG_COLOR))
+      });
+      this.field_shot_button_bg_color.connect('color-set', (button) => {
+        SettingsSchema.set_value(
+          Fields.SHOTBUTTON_BG_COLOR,
+          GLib.Variant.new_strv(splitColor(button.rgba))
+        );
+      });
 
-    this.field_tile_mode = new Gtk.Switch({
-      active: SettingsSchema.get_boolean(Fields.DISABLE_TILE_MODE)
-    });
-    this.field_tile_mode.connect('state-set', (toggler, state) => {
-      SettingsSchema.set_boolean(Fields.DISABLE_TILE_MODE, state);
-      toggler.active = state;
-    });
+      this.field_shot_button_fg_color = new Gtk.ColorButton({
+        rgba: buildColor(SettingsSchema.get_strv(Fields.SHOTBUTTON_FG_COLOR))
+      });
+      this.field_shot_button_fg_color.connect('color-set', (button) => {
+        SettingsSchema.set_value(
+          Fields.SHOTBUTTON_FG_COLOR,
+          GLib.Variant.new_strv(splitColor(button.rgba))
+        );
+      });
 
-    this.field_natural_panning = new Gtk.Switch({
-      active: SettingsSchema.get_boolean(Fields.NATURAL_PANNING)
-    });
-    this.field_natural_panning.connect('state-set', (toggler, state) => {
-      SettingsSchema.set_boolean(Fields.NATURAL_PANNING, state);
-      toggler.active = state;
-    });
+      this.field_swap_views = new Gtk.ComboBox({
+        active: SettingsSchema.get_int(Fields.SWAP_VIEWS),
+        model: this._create_swap_selector_options()
+      });
+      const rendererText = new Gtk.CellRendererText();
+      this.field_swap_views.pack_start(rendererText, false);
+      this.field_swap_views.add_attribute(rendererText, 'text', 0);
+      this.field_swap_views.connect('changed', (box) =>
+        SettingsSchema.set_int(Fields.SWAP_VIEWS, box.active)
+      );
 
-    this.field_keybinding = createKeybindingWidget(SettingsSchema);
-    this.binding_rows = {};
+      this.field_tile_mode = new Gtk.Switch({
+        active: SettingsSchema.get_boolean(Fields.DISABLE_TILE_MODE)
+      });
+      this.field_tile_mode.connect('state-set', (toggler, state) => {
+        SettingsSchema.set_boolean(Fields.DISABLE_TILE_MODE, state);
+        toggler.active = state;
+      });
 
-    this.binding_rows[Fields.TOGGLE_VISIBILITY] = addKeybinding(
-      this.field_keybinding.model,
-      SettingsSchema,
-      Fields.TOGGLE_VISIBILITY,
-      _('Toggle shot manager')
-    );
+      this.field_natural_panning = new Gtk.Switch({
+        active: SettingsSchema.get_boolean(Fields.NATURAL_PANNING)
+      });
+      this.field_natural_panning.connect('state-set', (toggler, state) => {
+        SettingsSchema.set_boolean(Fields.NATURAL_PANNING, state);
+        toggler.active = state;
+      });
 
-    this.reset_button = new Gtk.Button({
-      hexpand: true,
-      halign: Gtk.Align.END,
-      icon_name: 'edit-undo-symbolic'
-    });
+      this.field_keybinding = createKeybindingWidget(SettingsSchema);
+      this.binding_rows = {};
 
-    this.reset_button.get_style_context().add_class('circular');
-    this.reset_button.connect('clicked', () => {
-      Object.values(Fields).forEach((id) => SettingsSchema.reset(id));
-      this.field_tile_mode.active = SettingsSchema.get_boolean(
-        Fields.DISABLE_TILE_MODE
-      );
-      this.field_swap_views.active = SettingsSchema.get_int(Fields.SWAP_VIEWS);
-      this.field_natural_panning.active = SettingsSchema.get_boolean(
-        Fields.NATURAL_PANNING
-      );
-      this.field_tile_mode.active = SettingsSchema.get_boolean(
-        Fields.DISABLE_TILE_MODE
-      );
-      this.field_main_bg_color.rgba = buildColor(
-        SettingsSchema.get_strv(Fields.MAIN_BG_COLOR)
-      );
-      this.field_thumbnail_bg_color.rgba = buildColor(
-        SettingsSchema.get_strv(Fields.THUMBNAIL_BG_COLOR)
-      );
-      this.field_shot_button_bg_color.rgba = buildColor(
-        SettingsSchema.get_strv(Fields.SHOTBUTTON_BG_COLOR)
-      );
-      this.field_shot_button_fg_color.rgba = buildColor(
-        SettingsSchema.get_strv(Fields.SHOTBUTTON_FG_COLOR)
-      );
-      resetKeybinding(
-        this.field_keybinding,
+      this.binding_rows[Fields.TOGGLE_VISIBILITY] = addKeybinding(
+        this.field_keybinding.model,
         SettingsSchema,
         Fields.TOGGLE_VISIBILITY,
-        this.binding_rows
+        _('Toggle shot manager')
       );
-    });
 
-    const mainBGColor = new Gtk.Label({
-      label: _('Choose a contrasting background color'),
-      hexpand: true,
-      halign: Gtk.Align.START
-    });
-    const thumbnailBGColor = new Gtk.Label({
-      label: _('Choose background color for your thumbnails'),
-      hexpand: true,
-      halign: Gtk.Align.START
-    });
-    const shotButtonBGColor = new Gtk.Label({
-      label: _('Choose background color for screenshot button'),
-      hexpand: true,
-      halign: Gtk.Align.START
-    });
-    const shotButtonFGColor = new Gtk.Label({
-      label: _('Choose foreground color for screenshot button'),
-      hexpand: true,
-      halign: Gtk.Align.START
-    });
-    const swapViewsLabel = new Gtk.Label({
-      label: _('Swap main view layout'),
-      hexpand: true,
-      halign: Gtk.Align.START
-    });
+      this.reset_button = new Gtk.Button({
+        hexpand: true,
+        halign: Gtk.Align.END,
+        icon_name: 'edit-undo-symbolic'
+      });
 
-    const disableTileLabel = new Gtk.Label({
-      label: _('Prevent window from tiling'),
-      hexpand: true,
-      halign: Gtk.Align.START
-    });
+      this.reset_button.get_style_context().add_class('circular');
+      this.reset_button.connect('clicked', () => {
+        Object.values(Fields).forEach((id) => SettingsSchema.reset(id));
+        this.field_tile_mode.active = SettingsSchema.get_boolean(
+          Fields.DISABLE_TILE_MODE
+        );
+        this.field_swap_views.active = SettingsSchema.get_int(
+          Fields.SWAP_VIEWS
+        );
+        this.field_natural_panning.active = SettingsSchema.get_boolean(
+          Fields.NATURAL_PANNING
+        );
+        this.field_tile_mode.active = SettingsSchema.get_boolean(
+          Fields.DISABLE_TILE_MODE
+        );
+        this.field_main_bg_color.rgba = buildColor(
+          SettingsSchema.get_strv(Fields.MAIN_BG_COLOR)
+        );
+        this.field_thumbnail_bg_color.rgba = buildColor(
+          SettingsSchema.get_strv(Fields.THUMBNAIL_BG_COLOR)
+        );
+        this.field_shot_button_bg_color.rgba = buildColor(
+          SettingsSchema.get_strv(Fields.SHOTBUTTON_BG_COLOR)
+        );
+        this.field_shot_button_fg_color.rgba = buildColor(
+          SettingsSchema.get_strv(Fields.SHOTBUTTON_FG_COLOR)
+        );
+        resetKeybinding(
+          this.field_keybinding,
+          SettingsSchema,
+          Fields.TOGGLE_VISIBILITY,
+          this.binding_rows
+        );
+      });
 
-    const naturalPanLabel = new Gtk.Label({
-      label: _('Set drag direction of image viewer (natural panning)'),
-      hexpand: true,
-      halign: Gtk.Align.START
-    });
+      const mainBGColor = new Gtk.Label({
+        label: _('Choose a contrasting background color'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
+      const thumbnailBGColor = new Gtk.Label({
+        label: _('Choose background color for your thumbnails'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
+      const shotButtonBGColor = new Gtk.Label({
+        label: _('Choose background color for screenshot button'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
+      const shotButtonFGColor = new Gtk.Label({
+        label: _('Choose foreground color for screenshot button'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
+      const swapViewsLabel = new Gtk.Label({
+        label: _('Swap main view layout'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
 
-    const bindWarningLabel = new Gtk.Label({
-      hexpand: true,
-      halign: Gtk.Align.END
-    });
-    bindWarningLabel.set_markup(
-      `<span foreground="red" font_size="small"><i>` +
-        `${_('You cannot bind to `Ctrl+R` or `Ctrl+L`')}</i></span>`
-    );
+      const disableTileLabel = new Gtk.Label({
+        label: _('Prevent window from tiling'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
 
-    const addRow = ((main) => {
-      let row = 0;
-      return (label, input) => {
-        let inputWidget = input;
+      const naturalPanLabel = new Gtk.Label({
+        label: _('Set drag direction of image viewer (natural panning)'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
 
-        if (input instanceof Gtk.Switch) {
-          inputWidget = new Gtk.Box({
-            orientation: Gtk.Orientation.HORIZONTAL
-          });
-          inputWidget.append(input);
-        }
+      const bindWarningLabel = new Gtk.Label({
+        hexpand: true,
+        halign: Gtk.Align.END
+      });
+      bindWarningLabel.set_markup(
+        `<span foreground="red" font_size="small"><i>` +
+          `${_('You cannot bind to `Ctrl+R` or `Ctrl+L`')}</i></span>`
+      );
 
-        if (label) {
-          main.attach(label, 0, row, 1, 1);
-          main.attach(inputWidget, 1, row, 1, 1);
-        } else {
-          main.attach(inputWidget, 0, row, 2, 1);
-        }
+      const addRow = ((main) => {
+        let row = 0;
+        return (label, input) => {
+          let inputWidget = input;
 
-        row++;
-      };
-    })(this.main);
+          if (input instanceof Gtk.Switch) {
+            inputWidget = new Gtk.Box({
+              orientation: Gtk.Orientation.HORIZONTAL
+            });
+            inputWidget.append(input);
+          }
 
-    addRow(mainBGColor, this.field_main_bg_color);
-    addRow(thumbnailBGColor, this.field_thumbnail_bg_color);
-    addRow(shotButtonBGColor, this.field_shot_button_bg_color);
-    addRow(shotButtonFGColor, this.field_shot_button_fg_color);
-    addRow(swapViewsLabel, this.field_swap_views);
- //   addRow(disableTileLabel, this.field_tile_mode);
-    addRow(naturalPanLabel, this.field_natural_panning);
-    addRow(null, this.field_keybinding);
-    addRow(null, bindWarningLabel);
-    addRow(null, this.reset_button);
-  },
-  _create_swap_selector_options: function () {
-    const options = [{ name: _('Left') }, { name: _('Right') }];
-    const liststore = new Gtk.ListStore();
-    liststore.set_column_types([GObject.TYPE_STRING]);
-    for (let i = 0; i < options.length; ++i) {
-      const option = options[i];
-      const iter = liststore.append();
-      liststore.set(iter, [0], [option.name]);
+          if (label) {
+            main.attach(label, 0, row, 1, 1);
+            main.attach(inputWidget, 1, row, 1, 1);
+          } else {
+            main.attach(inputWidget, 0, row, 2, 1);
+          }
+
+          row++;
+        };
+      })(this.main);
+
+      addRow(mainBGColor, this.field_main_bg_color);
+      addRow(thumbnailBGColor, this.field_thumbnail_bg_color);
+      addRow(shotButtonBGColor, this.field_shot_button_bg_color);
+      addRow(shotButtonFGColor, this.field_shot_button_fg_color);
+      addRow(swapViewsLabel, this.field_swap_views);
+      //   addRow(disableTileLabel, this.field_tile_mode);
+      addRow(naturalPanLabel, this.field_natural_panning);
+      addRow(null, this.field_keybinding);
+      addRow(null, bindWarningLabel);
+      addRow(null, this.reset_button);
     }
-    return liststore;
+
+    _create_swap_selector_options() {
+      const options = [{ name: _('Left') }, { name: _('Right') }];
+      const liststore = new Gtk.ListStore();
+      liststore.set_column_types([GObject.TYPE_STRING]);
+      for (let i = 0; i < options.length; ++i) {
+        const option = options[i];
+        const iter = liststore.append();
+        liststore.set(iter, [0], [option.name]);
+      }
+      return liststore;
+    }
   }
-});
+);
 
 function buildColor(code) {
   const [red, green, blue, alpha] = code.map((c) => parseFloat(c));

@@ -26,24 +26,32 @@ const {
   Meta,
   Shell,
   St,
-  Gdk,
   GdkPixbuf
 } = imports.gi;
+
+/*
+ * Import only what you need as importing Gdk in shell process is
+ * not allowed.
+ * https://gjs.guide/extensions/review-guidelines/review-guidelines.html
+ * #do-not-import-gtk-libraries-in-gnome-shell
+ */
+const { cairo_set_source_pixbuf } = imports.gi.Gdk;
 
 const Cairo = imports.cairo;
 const Util = imports.misc.util;
 const File = Gio.File;
 const Main = imports.ui.main;
+const MessageTray = imports.ui.messageTray;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
 const Gettext = imports.gettext;
 const _ = Gettext.domain('pixzzle').gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } =
-  Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } = Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
-const { Panel } = Me.imports.panel;
+const { computePanelPosition } = Me.imports.panel;
+const Panel = computePanelPosition();
 const Prefs = Me.imports.prefs;
 
 const INITIAL_WIDTH = 500;
@@ -99,7 +107,7 @@ var UIMainViewer = GObject.registerClass(
         x: 0,
         y: 0
       });
-      /*\
+      /*
        *  Move the close button within its parent
        *  by factor 1. 0 means left-most end, 1
        *  means right-most end.
@@ -115,7 +123,7 @@ var UIMainViewer = GObject.registerClass(
        *  |         |
        *  +---------+
        *   - factor -
-      \*/
+       */
       this._closeButton.add_constraint(
         new Clutter.AlignConstraint({
           source: this,
@@ -133,10 +141,10 @@ var UIMainViewer = GObject.registerClass(
         })
       );
       this._closeButton.connect('clicked', this._close.bind(this));
-      /*\
+      /*
        * vfunc_release_event is not triggered if we drag into the
        * zone of a reactive widget. We forcefully stop drag.
-      \*/
+       */
       this._closeButton.connect('enter-event', this._stopDrag.bind(this));
       this.add_child(this._closeButton);
 
@@ -223,7 +231,7 @@ var UIMainViewer = GObject.registerClass(
 
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
-        /*\
+        /*
          * If a new image has been loaded into the big view
          * and it has a smaller size than the previous one,
          * reset our size to default.
@@ -231,7 +239,7 @@ var UIMainViewer = GObject.registerClass(
          * one, we shouldn't go back to the default size,
          * we should move back just the enough distance
          * the full image.
-        \*/
+         */
         if (xGap < 0) {
           if (this._lastX - (this._startX - xGap) + 1 >= INITIAL_WIDTH) {
             this._startX += -xGap;
@@ -358,12 +366,12 @@ var UIMainViewer = GObject.registerClass(
         this.border_width * 2 -
         this._thumbnailView.width -
         this._splitViewXContainer.spacing;
-      /*\
+      /*
        * FIXME: For the height, the BoxLayout `SplitViewXContainer`
        * forces the this.border-bottom off. I'll use this workaround
        * of multiplying border-width by 2 to account for the
        * pushed off bottom border, till I find a fix.
-      \*/
+       */
       const height =
         this.height -
         this.border_width * 2 -
@@ -614,7 +622,7 @@ var UIMainViewer = GObject.registerClass(
     _showUI() {
       if (this._isActive) return;
 
-      this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+      this._showTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
         this.opacity = 0;
         this.show();
         this.ease({
@@ -624,41 +632,45 @@ var UIMainViewer = GObject.registerClass(
         });
 
         lg('[UIMainViewer::_showUI]');
-        this._timeoutId = null;
+        this._showTimeoutId = null;
         this._isActive = true;
         return GLib.SOURCE_REMOVE;
       });
       GLib.Source.set_name_by_id(
-        this._timeoutId,
+        this._showTimeoutId,
         '[gnome-shell] UiMainViewer._showUI'
       );
     }
 
     _toggleUI() {
-      this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-        const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
-        this.opacity = newOpacity;
-        if (!this._isActive) {
-          this.show();
-        } else {
-          this._closeSettings();
-        }
-        this.ease({
-          opacity: FULLY_OPAQUE - newOpacity,
-          duration: 150,
-          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-          onComplete: () => {
-            this._isActive && this.hide();
-            this._isActive = !this._isActive;
+      this._toggleTimeoutId = GLib.timeout_add(
+        GLib.PRIORITY_DEFAULT,
+        300,
+        () => {
+          const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
+          this.opacity = newOpacity;
+          if (!this._isActive) {
+            this.show();
+          } else {
+            this._closeSettings();
           }
-        });
+          this.ease({
+            opacity: FULLY_OPAQUE - newOpacity,
+            duration: 150,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            onComplete: () => {
+              this._isActive && this.hide();
+              this._isActive = !this._isActive;
+            }
+          });
 
-        lg('[UIMainViewer::_toggleUI]');
-        this._timeoutId = null;
-        return GLib.SOURCE_REMOVE;
-      });
+          lg('[UIMainViewer::_toggleUI]');
+          this._toggleTimeoutId = null;
+          return GLib.SOURCE_REMOVE;
+        }
+      );
       GLib.Source.set_name_by_id(
-        this._timeoutId,
+        this._toggleTimeoutId,
         '[gnome-shell] UiMainViewer._toggleUI'
       );
     }
@@ -690,9 +702,9 @@ var UIMainViewer = GObject.registerClass(
           const monitor =
             Main.layoutManager.monitors[Main.layoutManager.primaryIndex];
 
-          /*\
+          /*
            * Set the initial dimension of the selection rect
-          \*/
+           */
           this._startX = monitor.x + monitor.width - INITIAL_WIDTH - ALLOWANCE;
           this._startY = monitor.y + (monitor.height - INITIAL_HEIGHT) / 2;
           this._lastX = this._startX + INITIAL_WIDTH;
@@ -953,7 +965,6 @@ var UIMainViewer = GObject.registerClass(
         dy -= overshootY;
       } else if (this._lastY >= monitorHeight - Panel.Bottom.height) {
         overshootY = monitorHeight - Panel.Bottom.height - this._lastY;
-        this._startY += overshootY;
         this._lastY += overshootY;
         dy -= overshootY;
       }
@@ -1094,16 +1105,16 @@ var UIMainViewer = GObject.registerClass(
     }
 
     /*vfunc_touch_event(event) {
-      const eventType = event.type;
-      if (eventType === Clutter.EventType.TOUCH_BEGIN)
-        return this._onPress(event, 'touch', event.get_event_sequence());
-      else if (eventType === Clutter.EventType.TOUCH_END)
-        return this._onRelease(event, 'touch', event.get_event_sequence());
-      else if (eventType === Clutter.EventType.TOUCH_UPDATE)
-        return this._onMotion(event, event.get_event_sequence());
+    const eventType = event.type;
+    if (eventType === Clutter.EventType.TOUCH_BEGIN)
+      return this._onPress(event, 'touch', event.get_event_sequence());
+    else if (eventType === Clutter.EventType.TOUCH_END)
+      return this._onRelease(event, 'touch', event.get_event_sequence());
+    else if (eventType === Clutter.EventType.TOUCH_UPDATE)
+      return this._onMotion(event, event.get_event_sequence());
 
-      return Clutter.EVENT_PROPAGATE;
-    } */
+    return Clutter.EVENT_PROPAGATE;
+   } */
 
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
@@ -1127,30 +1138,19 @@ var UIMainViewer = GObject.registerClass(
   }
 );
 
-const ViewOrientation = Object.freeze({
-  TOP: 0,
-  RIGHT: 1,
-  BOTTOM: 2,
-  LEFT: 3
-});
+const ViewOrientation = Object.freeze({ TOP: 0, RIGHT: 1, BOTTOM: 2, LEFT: 3 });
 const N_AXIS = 4;
 
 const UIImageRenderer = GObject.registerClass(
   {
     Signals: {
-      'lock-axis': {
-        param_types: [Object.prototype]
-      },
+      'lock-axis': { param_types: [Object.prototype] },
       'clean-slate': {}
     }
   },
   class UIImageRenderer extends St.Widget {
     _init(topParent, params) {
-      super._init({
-        ...params,
-        reactive: true,
-        can_focus: true
-      });
+      super._init({ ...params, reactive: true, can_focus: true });
 
       this._topParent = topParent;
       this._canvas = new Clutter.Canvas();
@@ -1181,11 +1181,13 @@ const UIImageRenderer = GObject.registerClass(
             lg('[UIImageRenderer::_init::_draw]', 'pixbuf = (null)');
             return;
           }
+          this._visibleRegionPixbuf = pixbuf;
+
           context.save();
           context.setOperator(Cairo.Operator.CLEAR);
           context.paint();
           context.restore();
-          Gdk.cairo_set_source_pixbuf(
+          cairo_set_source_pixbuf(
             context,
             pixbuf,
             (maxWidth - effectiveWidth) / 2,
@@ -1219,14 +1221,14 @@ const UIImageRenderer = GObject.registerClass(
         this.emit('clean-slate');
         this._isPanningEnabled = false;
       } else if (newFile !== this._filename) {
-        /*\
-         * Since we support rotation, create 
+        /*
+         * Since we support rotation, create
          * a pixel buffer with a size of the
          * maximum dimension that can be achieved
          * through rotation. Any time we want
          * to render, we will rotate the mouse
          * to the current angle.
-        \*/
+         */
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
         if (pixbuf != null) {
           this._reOrient(-this._orientation, true /* flush */);
@@ -1269,15 +1271,15 @@ const UIImageRenderer = GObject.registerClass(
       if (!this._isPanningEnabled) {
         this._xpos = this._ypos = 0;
       } else {
-        /*\
+        /*
          * If the panning area is not yet
          * at the edge, move the area
          * to fill up the space created
          * from the drag.
          * Clip the drag delta that is added
-         * so that we don't exceed the 
+         * so that we don't exceed the
          * maximum size of the image.
-        \*/
+         */
         if (!lockedAxis.X_AXIS && this._xpos + maxWidth >= pixWidth) {
           this._xpos += Math.max(
             -Math.abs(deltaX),
@@ -1298,10 +1300,10 @@ const UIImageRenderer = GObject.registerClass(
       this.set_size(maxWidth, maxHeight);
     }
 
-    /*\
+    /*
      * Keep track of panning state at the current
      * orientation and restore on the next rotation.
-    \*/
+     */
     _reOrient(by, flush) {
       if (flush) {
         this._orientationLU.fill(null);
@@ -1320,6 +1322,61 @@ const UIImageRenderer = GObject.registerClass(
       this._ypos = pos?.y ?? 0;
     }
 
+    _copyToClipboard(pixbuf, message) {
+      if (this._clipboardCopyCancellable) {
+        this._clipboardCopyCancellable.cancel();
+      }
+
+      this._clipboardCopyCancellable = new Gio.Cancellable();
+      const stream = Gio.MemoryOutputStream.new_resizable();
+      pixbuf.save_to_streamv_async(
+        stream,
+        'png',
+        [],
+        [],
+        this._clipboardCopyCancellable,
+        (pixbuf, task) => {
+          if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
+            return;
+          }
+          stream.close(null);
+          const clipboard = St.Clipboard.get_default();
+          const bytes = stream.steal_as_bytes();
+          clipboard.set_content(St.ClipboardType.CLIPBOARD, 'image/png', bytes);
+          lg('[UIImageRenderer::_copyToClipboard]');
+
+          const time = GLib.DateTime.new_now_local();
+          const pixels = pixbuf.read_pixel_bytes();
+          const content = St.ImageContent.new_with_preferred_size(
+            pixbuf.width,
+            pixbuf.height
+          );
+          content.set_bytes(
+            pixels,
+            Cogl.PixelFormat.RGBA_8888,
+            pixbuf.width,
+            pixbuf.height,
+            pixbuf.rowstride
+          );
+
+          // Show a notification.
+          const source = new MessageTray.Source(
+            _('Pixzzle'),
+            'screenshot-recorded-symbolic'
+          );
+          const notification = new MessageTray.Notification(
+            source,
+            _(`${message}`),
+            _('You can paste the image from the clipboard.'),
+            { datetime: time, gicon: content }
+          );
+          notification.setTransient(true);
+          Main.messageTray.add(source);
+          source.showNotification(notification);
+        }
+      );
+    }
+
     _onKeyPress(event) {
       const symbol = event.keyval;
       if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
@@ -1335,6 +1392,15 @@ const UIImageRenderer = GObject.registerClass(
           );
           this._reOrient(N_AXIS - 1);
           this._reload();
+        } else if (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C) {
+          if (event.modifier_state & Clutter.ModifierType.SHIFT_MASK) {
+            this._copyToClipboard(
+              this._visibleRegionPixbuf,
+              'Viewport yanked!'
+            );
+          } else {
+            this._copyToClipboard(this._pixbuf, 'Image yanked!');
+          }
         }
       }
       return Clutter.EVENT_PROPAGATE;
@@ -1486,16 +1552,11 @@ const UIImageRenderer = GObject.registerClass(
 const UIThumbnailViewer = GObject.registerClass(
   {
     GTypeName: 'UIThumbnailViewer',
-    Signals: {
-      replace: { param_types: [GObject.TYPE_STRING] }
-    }
+    Signals: { replace: { param_types: [GObject.TYPE_STRING] } }
   },
   class UIThumbnailViewer extends St.BoxLayout {
     _init(params) {
-      super._init({
-        ...params,
-        y_expand: true
-      });
+      super._init({ ...params, y_expand: true });
 
       this._scrollView = new St.ScrollView({
         style_class: 'pixzzle-ui-thumbnail-scrollview',
@@ -1624,21 +1685,12 @@ const UIThumbnailViewer = GObject.registerClass(
 );
 
 const UIPreview = GObject.registerClass(
-  {
-    GTypeName: 'UIPreview',
-    Signals: {
-      activate: {},
-      delete: {}
-    }
-  },
+  { GTypeName: 'UIPreview', Signals: { activate: {}, delete: {} } },
   class UIPreview extends St.Widget {
     _init(filename, span, params) {
       super._init({ ...params, y_expand: false });
 
-      this._surface = new St.Widget({
-        x_expand: false,
-        y_expand: false
-      });
+      this._surface = new St.Widget({ x_expand: false, y_expand: false });
       this.add_child(this._surface);
 
       const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
@@ -1648,7 +1700,7 @@ const UIPreview = GObject.registerClass(
         pixbuf = baseBuf
           .scale_simple(
             span,
-            (span * 1.0) / aspectRatio,
+            Math.max((span * 1.0) / aspectRatio, span),
             GdkPixbuf.InterpType.BILINEAR
           )
           .new_subpixbuf(0, 0, span, span);
@@ -1657,7 +1709,7 @@ const UIPreview = GObject.registerClass(
           new Shell.BlurEffect({
             brightness: 255,
             mode: Shell.BlurMode.ACTOR,
-            sigma: 1
+            sigma: 2.5
           })
         );
       }
