@@ -1627,7 +1627,7 @@ const UIThumbnailViewer = GObject.registerClass(
           GLib.unlink(filename);
         });
       });
-      this._viewBox.insert_child_at_index(shot, 0);
+      this._viewBox.add_child(shot);
       this.emit('replace', newShot);
     }
 
@@ -1697,11 +1697,27 @@ const UIThumbnailViewer = GObject.registerClass(
               }
               return;
             }
+            files.sort(filesDateSorter);
             resolve(files);
             return;
           }
         );
       });
+
+      function filesDateSorter(one, other) {
+        const oneDate = getDate(one);
+        const otherDate = getDate(other);
+        return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
+      }
+
+      function getDate(fullname) {
+        const name = GLib.path_get_basename(fullname);
+        const uuid = GLib.uuid_string_random().length + 1;
+        const effective = name.slice(uuid, name.indexOf('.'));
+        const parts = effective.match(/(\d+-\d+-\d+)-(\d+-\d+-\d+)/);
+        const [date, time] = [parts[1], parts[2].replaceAll('-', ':')];
+        return Date.parse(date + ' ' + time);
+      }
     }
   }
 );
