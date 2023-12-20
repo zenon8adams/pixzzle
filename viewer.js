@@ -385,13 +385,19 @@ var UIMainViewer = GObject.registerClass(
     _showScreenshotView() {
       if (!this._shutter) {
         this._shutter = new UIShutter();
-        this._shutter.connect('begin-close', () => {
-          lg('[UIMainViewer::_showScreenshotView::begin-close]');
-          this._showUI();
-        });
-        this._shutter.connect('new-shot', (_, shotName) => {
-          this._thumbnailView._addShot(shotName);
-        });
+        this._shutterClosingHandler = this._shutter.connect(
+          'begin-close',
+          () => {
+            lg('[UIMainViewer::_showScreenshotView::begin-close]');
+            this._showUI();
+          }
+        );
+        this._shutterNewShotHandler = this._shutter.connect(
+          'new-shot',
+          (_, shotName) => {
+            this._thumbnailView._addShot(shotName);
+          }
+        );
       }
 
       this._close();
@@ -612,7 +618,10 @@ var UIMainViewer = GObject.registerClass(
 
     _onDestroy() {
       if (this._shutter) {
+        this._shutter.disconnect(this._shutterClosingHandler);
+        this._shutter.disconnect(this._shutterNewShotHandler);
         this._shutter.destroy();
+        this._shutter = null;
       }
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
@@ -946,14 +955,26 @@ var UIMainViewer = GObject.registerClass(
         }
       }
 
+      /*
+       * Use flag to selectively remove points
+       * that was updated above. During a move,
+       * we update all the 4 endpoints. When
+       * we reach the boundaries of the window,
+       * we have to remove the update from both
+       * ends that have the update added. If
+       * this is not done, the end at the
+       * boundary stays at the boundary, the
+       * opposite end expands.
+       */
+      const isMove = cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW;
       if (this._startX < Panel.Left.width) {
         overshootX = Panel.Left.width - this._startX;
         this._startX += overshootX;
-        this._lastX += overshootX;
+        this._lastX += overshootX * isMove;
         dx -= overshootX;
       } else if (this._lastX >= monitorWidth - Panel.Right.width) {
         overshootX = monitorWidth - Panel.Right.width - this._lastX;
-        this._startX += overshootX;
+        this._startX += overshootX * isMove;
         this._lastX += overshootX;
         dx -= overshootX;
       }
@@ -961,11 +982,12 @@ var UIMainViewer = GObject.registerClass(
       if (this._startY < Panel.Top.height) {
         overshootY = Panel.Top.height - this._startY;
         this._startY += overshootY;
-        this._lastY += overshootY;
+        this._lastY += overshootY * isMove;
         dy -= overshootY;
       } else if (this._lastY >= monitorHeight - Panel.Bottom.height) {
         overshootY = monitorHeight - Panel.Bottom.height - this._lastY;
-        this._lastY += overshootY;
+        this._startY += overshootY;
+        this._lastY += overshootY * isMove;
         dy -= overshootY;
       }
 
