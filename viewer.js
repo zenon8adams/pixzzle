@@ -48,7 +48,8 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext;
 const _ = Gettext.domain('pixzzle').gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } = Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE, THUMBNAIL_STORE } =
+  Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
 const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
@@ -59,6 +60,13 @@ const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const FULLY_OPAQUE = 255;
+/*
+ * Store metadata in image ancillary chunk
+ * to detect if the image is smaller than
+ * the size of thumbnail view. This kinds
+ * of images are blurred to reduce pixellation.
+ */
+const TINY_IMAGE = 'tINy';
 
 let SETTING_DISABLE_TILE_MODE;
 let SETTING_NATURAL_PANNING;
@@ -395,7 +403,7 @@ var UIMainViewer = GObject.registerClass(
         this._shutterNewShotHandler = this._shutter.connect(
           'new-shot',
           (_, shotName) => {
-            this._thumbnailView._addShot(shotName);
+            this._thumbnailView._addNewShot(shotName);
           }
         );
       }
@@ -623,6 +631,12 @@ var UIMainViewer = GObject.registerClass(
         this._shutter.destroy();
         this._shutter = null;
       }
+
+      if (this._showTimeoutId) {
+        GLib.Source.remove(this._showTimeoutId);
+        this._showTimeoutId = null;
+      }
+
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
       this._unbindShortcuts();
@@ -1614,7 +1628,7 @@ const UIThumbnailViewer = GObject.registerClass(
       });
     }
 
-    _addShot(newShot) {
+    _addShot(newShot, prepend) {
       const shot = new UIPreview(newShot, this.width);
       shot.connect('activate', (widget) => {
         lg('UIThumbnailViewer::_addShot::shot::activate]', widget);
@@ -1627,7 +1641,15 @@ const UIThumbnailViewer = GObject.registerClass(
           GLib.unlink(filename);
         });
       });
-      this._viewBox.add_child(shot);
+      if (prepend) {
+        this._viewBox.insert_child_at_index(shot, 0);
+      } else {
+        this._viewBox.add_child(shot);
+      }
+    }
+
+    _addNewShot(newShot) {
+      this._addShot(newShot, true /* prepend */);
       this.emit('replace', newShot);
     }
 
@@ -1687,7 +1709,9 @@ const UIThumbnailViewer = GObject.registerClass(
                   directory.get_path(),
                   info.get_name()
                 ]);
-                files.push(filename);
+                if (!GLib.file_test(filename, GLib.FileTest.IS_DIR)) {
+                  files.push(filename);
+                }
               }
             } catch (e) {
               if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
@@ -1731,18 +1755,34 @@ const UIPreview = GObject.registerClass(
       this._surface = new St.Widget({ x_expand: false, y_expand: false });
       this.add_child(this._surface);
 
-      const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
-      let pixbuf = baseBuf.new_subpixbuf(0, 0, span, span);
-      if (pixbuf === null) {
-        const aspectRatio = baseBuf.get_width() / baseBuf.get_height();
-        pixbuf = baseBuf
-          .scale_simple(
-            span,
-            Math.max((span * 1.0) / aspectRatio, span),
-            GdkPixbuf.InterpType.BILINEAR
-          )
-          .new_subpixbuf(0, 0, span, span);
+      const [thumbnail, actualFile] = this._getThumbnail(filename);
+      let pixbuf;
+      if (!thumbnail) {
+        const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
+        pixbuf = baseBuf.new_subpixbuf(0, 0, span, span);
+        if (pixbuf === null) {
+          const aspectRatio = baseBuf.get_width() / baseBuf.get_height();
+          pixbuf = baseBuf
+            .scale_simple(
+              span,
+              Math.max((span * 1.0) / aspectRatio, span),
+              GdkPixbuf.InterpType.BILINEAR
+            )
+            .new_subpixbuf(0, 0, span, span);
+          pixbuf.set_option(TINY_IMAGE, 'true');
+        }
 
+        this._saveThumbnail(pixbuf, actualFile);
+      } else {
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(actualFile);
+      }
+      const isTiny = pixbuf.get_option(TINY_IMAGE) === 'true';
+
+      if (isTiny) {
+        /*
+         * If original image is smaller than thumbnail,
+         * scale and blur the thumbnail.
+         */
         this._surface.add_effect(
           new Shell.BlurEffect({
             brightness: 255,
@@ -1751,6 +1791,7 @@ const UIPreview = GObject.registerClass(
           })
         );
       }
+
       this._filename = filename;
       this._image = Clutter.Image.new();
       this._image.set_data(
@@ -1814,6 +1855,28 @@ const UIPreview = GObject.registerClass(
       this._removeButton.connect('clicked', () => {
         lg('[UIPreview::_init::_closeButton::clicked]');
         this.emit('delete');
+      });
+    }
+
+    _getThumbnail(filename) {
+      const dir = THUMBNAIL_STORE;
+      const base = GLib.path_get_basename(filename);
+      const thumbnail = GLib.build_filenamev([dir.get_path(), base]);
+      if (GLib.file_test(thumbnail, GLib.FileTest.EXISTS)) {
+        return [true, thumbnail];
+      }
+
+      return [false, thumbnail];
+    }
+
+    _saveThumbnail(image, filename) {
+      const file = Gio.File.new_for_path(filename);
+      const stream = file.create(Gio.FileCreateFlags.NONE, null);
+      image.save_to_streamv_async(stream, 'png', [], [], null, (_, task) => {
+        if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
+          return;
+        }
+        stream.close(null);
       });
     }
   }

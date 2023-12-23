@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-const {Gio, GLib} = imports.gi;
+const { Gio, GLib } = imports.gi;
 
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
@@ -33,8 +33,9 @@ function lg() {
 function format() {
   const vicinity = arguments[0];
   const actualArgs = Array.from(arguments).slice(1);
-  return ('[' + SCHEMA_NAME + '] ' +
-          '[' + vicinity + '] ' + actualArgs.join(' '));
+  return (
+    '[' + SCHEMA_NAME + '] ' + '[' + vicinity + '] ' + actualArgs.join(' ')
+  );
 }
 
 function inflateSettings() {
@@ -42,9 +43,10 @@ function inflateSettings() {
   return settings;
 }
 
-const _getShotStore = function() {
-  const path =
-      Gio.File.new_for_path(GLib.build_filenamev(Array.from(arguments)));
+const _getShotStore = function () {
+  const path = Gio.File.new_for_path(
+    GLib.build_filenamev(Array.from(arguments))
+  );
   try {
     path.make_directory_with_parents(null);
   } catch (e) {
@@ -56,5 +58,10 @@ const _getShotStore = function() {
   return path;
 };
 
-var SHOT_STORE =
-    _getShotStore(GLib.get_user_cache_dir(), 'extension', SCHEMA_NAME);
+var SHOT_STORE = _getShotStore(
+  GLib.get_user_cache_dir(),
+  'extension',
+  SCHEMA_NAME
+);
+
+var THUMBNAIL_STORE = _getShotStore(SHOT_STORE.get_path(), '.thumbnail');
