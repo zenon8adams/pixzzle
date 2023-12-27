@@ -1000,8 +1000,8 @@ var UIMainViewer = GObject.registerClass(
         dy -= overshootY;
       } else if (this._lastY >= monitorHeight - Panel.Bottom.height) {
         overshootY = monitorHeight - Panel.Bottom.height - this._lastY;
-        this._startY += overshootY;
-        this._lastY += overshootY * isMove;
+        this._startY += overshootY * isMove;
+        this._lastY += overshootY;
         dy -= overshootY;
       }
 

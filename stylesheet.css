@@ -26,8 +26,8 @@
 
 .pixzzle-ui-close-button {
   border-radius: 99px;
-  color: #eee;
-  background-color: #c97657;
+  color: #fff;
+  background-color: #ff842e;
 }
 
 .pixzzle-ui-close-button StIcon {
@@ -227,8 +227,8 @@
 
 .pixzzle-ui-thumbnail-close-button {
   border-radius: 99px;
-  color: #eee;
-  background-color: #c97657;
+  color: #fff;
+  background-color: #ff842e;
 }
 
 .pixzzle-ui-snap-indicator {
