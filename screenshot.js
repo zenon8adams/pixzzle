@@ -43,8 +43,7 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } =
-  Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } = Me.imports.utils;
 
 const IconLabelButton = GObject.registerClass(
   class IconLabelButton extends St.Button {
@@ -137,7 +136,7 @@ const UIAreaIndicator = GObject.registerClass(
   class UIAreaIndicator extends St.Widget {
     _init(params) {
       super._init(params);
-      /*\
+      /*
        *   We make this structure
        *   +------------------+
        *   |        TR        |
@@ -158,7 +157,7 @@ const UIAreaIndicator = GObject.registerClass(
        *   we have will stretch/strain
        *   to give space for the
        *   selection rectangle.
-      \*/
+       */
 
       this._topRect = new St.Widget({
         style_class: 'pixzzle-ui-area-indicator-shade'
@@ -361,7 +360,7 @@ const UIAreaSelector = GObject.registerClass(
 
       // Initialize area to out of bounds so reset() below resets it.
       // This is the selection rectangle
-      /*\
+      /*
        * (_startX, _startY)
        *         +----------------+
        *         |                |
@@ -370,7 +369,7 @@ const UIAreaSelector = GObject.registerClass(
        *         |                |
        *         +----------------+
        *                   (_lastX, _lastY)
-      \*/
+       */
       this._startX = -1;
       this._startY = 0;
       this._lastX = 0;
@@ -399,9 +398,9 @@ const UIAreaSelector = GObject.registerClass(
           const monitor =
             Main.layoutManager.monitors[Main.layoutManager.primaryIndex];
 
-          /*\
-                       * Set the initial dimension of the selection rect
-                      \*/
+          /*
+           * Set the initial dimension of the selection rect
+           */
           this._startX = monitor.x + Math.floor((monitor.width * 3) / 8);
           this._startY = monitor.y + Math.floor((monitor.height * 3) / 8);
           this._lastX = monitor.x + Math.floor((monitor.width * 5) / 8) - 1;
@@ -412,9 +411,9 @@ const UIAreaSelector = GObject.registerClass(
       }
     }
 
-    /*\
+    /*
      * Returns the [x, y, w, h] of this geometry
-    \*/
+     */
     getGeometry() {
       const leftX = Math.min(this._startX, this._lastX);
       const topY = Math.min(this._startY, this._lastY);
@@ -428,12 +427,12 @@ const UIAreaSelector = GObject.registerClass(
       const [x, y, w, h] = this.getGeometry();
       this._areaIndicator.setSelectionRect(x, y, w, h);
 
-      /*\
-               * Update the selection rectangle handles with
-               * the newly computed dimensions of the
-               * selection rectangle using the center point
-               * of the handle (i.e offset).
-              \*/
+      /*
+       * Update the selection rectangle handles with
+       * the newly computed dimensions of the
+       * selection rectangle using the center point
+       * of the handle (i.e offset).
+       */
       const offset = this._handleSize / 2;
       this._topLeftHandle.set_position(x - offset, y - offset);
       this._topRightHandle.set_position(x + w - 1 - offset, y - offset);
@@ -464,7 +463,7 @@ const UIAreaSelector = GObject.registerClass(
       const threshold =
         5 * St.ThemeContext.get_for_stage(global.stage).scaleFactor;
 
-      /*\
+      /*
        *  We compute the cursor type on this basis:
        *  For this expression,
        *  leftX - x >= 0 && leftX - x <= threshold
@@ -488,7 +487,7 @@ const UIAreaSelector = GObject.registerClass(
        *  The other cases can the thought of as
        *  rotating the rectangle and repeating
        *  this process for each sides.
-      \*/
+       */
       if (leftX - x >= 0 && leftX - x <= threshold) {
         if (topY - y >= 0 && topY - y <= threshold)
           return Meta.Cursor.NW_RESIZE;
@@ -615,7 +614,7 @@ const UIAreaSelector = GObject.registerClass(
 
         // Start X and Y are set to the stationary sides, while last X
         // and Y are set to the moving sides.
-        /*\
+        /*
          *
          * If the north-east handle is dragged for example,
          * we have to update y-coordinate of the north-west(top-left)
@@ -652,7 +651,7 @@ const UIAreaSelector = GObject.registerClass(
          *    this.getGeometry() function uses a min-max to
          *    determine the bounding box of the current
          *    selection.
-        \*/
+         */
         if (
           cursor === Meta.Cursor.NW_RESIZE ||
           cursor === Meta.Cursor.WEST_RESIZE ||
@@ -741,7 +740,7 @@ const UIAreaSelector = GObject.registerClass(
           let newLastX = this._lastX + dx;
           let newLastY = this._lastY + dy;
 
-          /*\
+          /*
            * To understand the purpose of the overshoot,
            * Let us imagine a cursor that appears
            * at a position past the edge of the screen:
@@ -764,7 +763,7 @@ const UIAreaSelector = GObject.registerClass(
            *   this value from dx by adding it to
            *   the negative dx in order to bring it
            *   to zero.
-          \*/
+           */
 
           let overshootX = 0;
           let overshootY = 0;
@@ -838,7 +837,7 @@ const UIAreaSelector = GObject.registerClass(
 
           // If we drag the handle past a selection side, update which
           // handles are which.
-          /*\
+          /*
            *  Example:
            *
            * The this._lastX(which had `leftX` saved in it) is
@@ -868,7 +867,7 @@ const UIAreaSelector = GObject.registerClass(
            * than the this._startX(which had `rightX` saved in it).
            * We have to change the cursor pointer from `NW_RESIZE`
            * to `NE_RESIZE`.
-          \*/
+           */
           if (this._lastX > this._startX) {
             if (this._dragCursor === Meta.Cursor.NW_RESIZE)
               this._dragCursor = Meta.Cursor.NE_RESIZE;
@@ -1175,7 +1174,7 @@ var UIShutter = GObject.registerClass(
       this.add_child(
         new Tooltip(this._captureButton, {
           /* Translators: since this string refers to an action,
-        it needs to be phrased as a verb. */
+    it needs to be phrased as a verb. */
           text: _('Capture'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
@@ -1259,6 +1258,10 @@ var UIShutter = GObject.registerClass(
     _onDestroy() {
       Main.sessionMode.disconnect(this.sessionUpdateID);
       Main.layoutManager.disconnect(this.monitorChangeID);
+      if (this._timeoutId) {
+        GLib.Source.remove(this._timeoutId);
+        this._timeoutId = null;
+      }
     }
 
     _sessionUpdated() {

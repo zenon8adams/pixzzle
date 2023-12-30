@@ -39,15 +39,8 @@ function format() {
 }
 
 function inflateSettings() {
-  let schemaDir = Me.dir.get_child('schemas').get_path();
-  let schemaSource = Gio.SettingsSchemaSource.new_from_directory(
-    schemaDir,
-    Gio.SettingsSchemaSource.get_default(),
-    false
-  );
-  let schema = schemaSource.lookup(SCHEMA_NAME, false);
-
-  return new Gio.Settings({ settings_schema: schema });
+  const settings = ExtensionUtils.getSettings(SCHEMA_NAME);
+  return settings;
 }
 
 const _getShotStore = function () {
@@ -70,3 +63,5 @@ var SHOT_STORE = _getShotStore(
   'extension',
   SCHEMA_NAME
 );
+
+var THUMBNAIL_STORE = _getShotStore(SHOT_STORE.get_path(), '.thumbnail');

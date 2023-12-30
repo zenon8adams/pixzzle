@@ -19,7 +19,7 @@
 const Main = imports.ui.main;
 
 function computePanelPosition() {
-  const invisible = { x: 0, y: 0, width: 0, height: 0 };
+  const invisible = {x : 0, y : 0, width : 0, height : 0};
   if (Main.layoutManager.primaryIndex === -1) {
     return invisible;
   }
@@ -32,11 +32,9 @@ function computePanelPosition() {
   const isLeft = panel.x === monitor.x && panel.height === monitor.height;
 
   return {
-    Top: isTop ? panel : invisible,
-    Right: isRight ? panel : invisible,
-    Bottom: isBottom ? panel : invisible,
-    Left: isLeft ? panel : invisible
+    Top : isTop ? panel : invisible,
+    Right : isRight ? panel : invisible,
+    Bottom : isBottom ? panel : invisible,
+    Left : isLeft ? panel : invisible
   };
 }
-
-var Panel = computePanelPosition();
