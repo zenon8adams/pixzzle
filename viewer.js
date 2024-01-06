@@ -981,13 +981,13 @@ var UIMainViewer = GObject.registerClass(
        * opposite end expands.
        */
       const isMove = cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW;
-      if (this._startX < Panel.Left.width) {
-        overshootX = Panel.Left.width - this._startX;
+      if (this._startX < Panel.Left.width - this.width / 2) {
+        overshootX = Panel.Left.width - this.width / 2 - this._startX;
         this._startX += overshootX;
         this._lastX += overshootX * isMove;
         dx -= overshootX;
-      } else if (this._lastX >= monitorWidth - Panel.Right.width) {
-        overshootX = monitorWidth - Panel.Right.width - this._lastX;
+      } else if (this._lastX >= monitorWidth - Panel.Right.width + this.width / 2) {
+        overshootX = monitorWidth - Panel.Right.width + this.width / 2 - this._lastX;
         this._startX += overshootX * isMove;
         this._lastX += overshootX;
         dx -= overshootX;
@@ -998,8 +998,8 @@ var UIMainViewer = GObject.registerClass(
         this._startY += overshootY;
         this._lastY += overshootY * isMove;
         dy -= overshootY;
-      } else if (this._lastY >= monitorHeight - Panel.Bottom.height) {
-        overshootY = monitorHeight - Panel.Bottom.height - this._lastY;
+      } else if (this._lastY >= monitorHeight - Panel.Bottom.height + this.height / 2) {
+        overshootY = monitorHeight - Panel.Bottom.height + this.height / 2 - this._lastY;
         this._startY += overshootY * isMove;
         this._lastY += overshootY;
         dy -= overshootY;
