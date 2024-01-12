@@ -249,3 +249,17 @@
 .pixzzle-ui-settings-button StIcon {
   icon-size: 1.7em;
 }
+
+.pixzzle-ui-ocr-indicator {
+  color: red;
+  border: 1px solid red;
+}
+
+.pixzzle-ui-ocrtip {
+  color: #eeeeec;
+  background-color: #2e3436;
+  border-radius: 4px;
+  padding: 6px 12px;
+  outline: none;
+  border: none;
+}

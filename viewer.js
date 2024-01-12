@@ -26,7 +26,8 @@ const {
   Meta,
   Shell,
   St,
-  GdkPixbuf
+  GdkPixbuf,
+  Soup
 } = imports.gi;
 
 /*
@@ -41,6 +42,7 @@ const Cairo = imports.cairo;
 const Util = imports.misc.util;
 const File = Gio.File;
 const Main = imports.ui.main;
+const GrabHelper = imports.ui.grabHelper;
 const MessageTray = imports.ui.messageTray;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
@@ -68,8 +70,11 @@ const FULLY_OPAQUE = 255;
  */
 const TINY_IMAGE = 'tINy';
 
+const OCR_URL = 'http://api.ocr.space/parse/image';
+
 let SETTING_DISABLE_TILE_MODE;
 let SETTING_NATURAL_PANNING;
+let SETTING_OCR_API;
 
 const ViewMode = Object.freeze({
   ADAPTIVE: Symbol('adaptive'),
@@ -368,6 +373,10 @@ var UIMainViewer = GObject.registerClass(
       return this._border_width;
     }
 
+    _openOCRToolkit() {
+      this._imageViewer._openOCRToolkit();
+    }
+
     _computeBigViewSize() {
       const width =
         this.width -
@@ -562,6 +571,8 @@ var UIMainViewer = GObject.registerClass(
       SETTING_NATURAL_PANNING = this._settings.get_boolean(
         Prefs.Fields.NATURAL_PANNING
       );
+
+      SETTING_OCR_API = this._settings.get_string(Prefs.Fields.OCR_API);
     }
 
     _bindShortcuts() {
@@ -814,6 +825,8 @@ var UIMainViewer = GObject.registerClass(
         }
       }
 
+      lg('[UIMainViewer::_computeCursorType]', 'Setting cursor to DEFAULT');
+
       return Meta.Cursor.DEFAULT;
     }
 
@@ -986,8 +999,12 @@ var UIMainViewer = GObject.registerClass(
         this._startX += overshootX;
         this._lastX += overshootX * isMove;
         dx -= overshootX;
-      } else if (this._lastX >= monitorWidth - Panel.Right.width + this.width / 2) {
-        overshootX = monitorWidth - Panel.Right.width + this.width / 2 - this._lastX;
+      } else if (
+        this._lastX >=
+        monitorWidth - Panel.Right.width + this.width / 2
+      ) {
+        overshootX =
+          monitorWidth - Panel.Right.width + this.width / 2 - this._lastX;
         this._startX += overshootX * isMove;
         this._lastX += overshootX;
         dx -= overshootX;
@@ -998,8 +1015,12 @@ var UIMainViewer = GObject.registerClass(
         this._startY += overshootY;
         this._lastY += overshootY * isMove;
         dy -= overshootY;
-      } else if (this._lastY >= monitorHeight - Panel.Bottom.height + this.height / 2) {
-        overshootY = monitorHeight - Panel.Bottom.height + this.height / 2 - this._lastY;
+      } else if (
+        this._lastY >=
+        monitorHeight - Panel.Bottom.height + this.height / 2
+      ) {
+        overshootY =
+          monitorHeight - Panel.Bottom.height + this.height / 2 - this._lastY;
         this._startY += overshootY * isMove;
         this._lastY += overshootY;
         dy -= overshootY;
@@ -1186,7 +1207,12 @@ const UIImageRenderer = GObject.registerClass(
   },
   class UIImageRenderer extends St.Widget {
     _init(topParent, params) {
-      super._init({ ...params, reactive: true, can_focus: true });
+      super._init({
+        ...params,
+        reactive: true,
+        can_focus: true,
+        layout_manager: new Clutter.BinLayout()
+      });
 
       this._topParent = topParent;
       this._canvas = new Clutter.Canvas();
@@ -1237,6 +1263,20 @@ const UIImageRenderer = GObject.registerClass(
           this._filename = null;
         }
       });
+      this._ocrIndicator = new St.Widget({
+        style_class: 'pixzzle-ui-ocr-indicator'
+      });
+      this.add_child(this._ocrIndicator);
+
+      this._ocrText = new OcrTip(this._ocrIndicator, this, {
+        style_class: 'pixzzle-ui-ocrtip',
+        x_align: St.Align.START,
+        visible: false,
+        reactive: true
+      });
+      this._ocrText.clutter_text.set_selectable(true);
+      this._ocrText.clutter_text.set_editable(false);
+      this._topParent.add_child(this._ocrText);
     }
 
     _redraw(deltaX, deltaY) {
@@ -1300,6 +1340,7 @@ const UIImageRenderer = GObject.registerClass(
         this._pixbuf.get_height()
       ];
       this._isPanningEnabled = pixWidth > maxWidth || pixHeight > maxHeight;
+      this._updateToolkits();
       const lockedAxis = {
         X_AXIS: pixWidth <= maxWidth,
         Y_AXIS: pixHeight <= maxHeight
@@ -1358,7 +1399,27 @@ const UIImageRenderer = GObject.registerClass(
       this._ypos = pos?.y ?? 0;
     }
 
-    _copyToClipboard(pixbuf, message) {
+    _copyTextToClipboard(text, message) {
+      const clipboard = St.Clipboard.get_default();
+      clipboard.set_text(St.ClipboardType.CLIPBOARD, text);
+
+      // Show a notification.
+      const source = new MessageTray.Source(
+        _('Pixzzle'),
+        'screenshot-recorded-symbolic'
+      );
+      const notification = new MessageTray.Notification(
+        source,
+        _(`${message}`),
+        _('Text is available in your clipboard'),
+        {}
+      );
+      notification.setTransient(true);
+      Main.messageTray.add(source);
+      source.showNotification(notification);
+    }
+
+    _copyImageToClipboard(pixbuf, message) {
       if (this._clipboardCopyCancellable) {
         this._clipboardCopyCancellable.cancel();
       }
@@ -1413,6 +1474,207 @@ const UIImageRenderer = GObject.registerClass(
       );
     }
 
+    _updateToolkits() {
+      this._updateOCRToolkit();
+    }
+
+    _updateOCRToolkit() {
+      this._isInOCRSession = !this._isPanningEnabled;
+      this._ocrIndicator.visible = this._isInOCRSession;
+      this._ocrText.hide();
+    }
+
+    _openOCRToolkit() {
+      if (this._isPanningEnabled) {
+        this._isPanningEnabled = !this._isPanningEnabled;
+      }
+
+      // Perform ocr
+      lg('[UIImageRenderer::_onKeyPress]', 'starting ocr');
+      this._isInOCRSession = !this._isInOCRSession;
+      this._ocrIndicator.visible = this._isInOCRSession;
+      this._ocrIndicator.set_size(0, 0);
+      if (!this._ocrIndicator.visible) {
+        this._ocrText.hide();
+      }
+      this._updateCursor();
+    }
+
+    _processOCRCapture() {
+      const vw = this._visibleRegionPixbuf.width;
+      const vh = this._visibleRegionPixbuf.height;
+      const w = this._canvas.width;
+      const h = this._canvas.height;
+      const oLeft = this._ocrIndicator.x;
+      const oTop = this._ocrIndicator.y;
+      const oRight = oLeft + this._ocrIndicator.width - 1;
+      const oBottom = oTop + this._ocrIndicator.height - 1;
+      const [minX, minY] = [(w - vw) / 2, (h - vh) / 2];
+      const [maxX, maxY] = [(w + vw) / 2, (h + vh) / 2];
+      let [startX, startY] = [minX, minY];
+      let [endX, endY] = [maxX, maxY];
+
+      if (oLeft >= startX) {
+        startX = oLeft;
+      }
+      if (oTop >= startY) {
+        startY = oTop;
+      }
+      if (oRight <= endX) {
+        endX = oRight;
+      }
+      if (oBottom <= endY) {
+        endY = oBottom;
+      }
+
+      if (
+        startX >= minX &&
+        startX <= maxX &&
+        startY >= minY &&
+        startY <= maxY &&
+        endX >= startX &&
+        endX <= maxX &&
+        endY >= startY &&
+        endY <= maxY
+      ) {
+        const width = endX - startX + 1;
+        const height = endY - startY + 1;
+        if (width < 10 && height < 10) {
+          lg('[UIImageRenderer::_processOCRCapture]', width, height);
+          this._ocrIndicator.set_size(0, 0);
+          return;
+        }
+
+        this._ocrIndicator.set_position(startX, startY);
+        this._ocrIndicator.set_size(width, height);
+
+        startX -= minX;
+        startY -= minY;
+        endX -= minX;
+        endY -= minY;
+
+        const pixbuf = this._visibleRegionPixbuf.new_subpixbuf(
+          Math.max(startX, 0),
+          Math.max(startY, 0),
+          // Do this to ensure that we don't exceed the size limit of
+          // the image.
+          Math.min(endX - startX + 1, vw - startX),
+          Math.min(endY - startY + 1, vh - startY)
+        );
+        if (pixbuf === null) {
+          lg('[UIImageRenderer::_processOCRCapture]', 'pixbuf == (null)');
+          return;
+        }
+
+        if (this._ocrCancellable) {
+          this._ocrCancellable.cancel();
+          this._ocrCancellable = null;
+          this._ocrResultAvailable = false;
+        }
+
+        this._ocrText.open();
+        this._ocrText.clutter_text.set_text('Loading...');
+
+        const session = new Soup.Session({ ssl_strict: false });
+        const stream = Gio.MemoryOutputStream.new_resizable();
+
+        this._ocrCancellable = new Gio.Cancellable();
+        pixbuf.save_to_streamv_async(
+          stream,
+          'png',
+          [],
+          [],
+          this._ocrCancellable,
+          function (pixbuf, task) {
+            if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
+              return;
+            }
+            stream.close(null);
+
+            const bytes = stream.steal_as_bytes();
+            const multipart = new Soup.Multipart(Soup.FORM_MIME_TYPE_MULTIPART);
+            multipart.append_form_string(
+              'base64Image',
+              'data:image/png;base64,' + GLib.base64_encode(bytes.get_data())
+            );
+            multipart.append_form_string('apikey', SETTING_OCR_API);
+            multipart.append_form_string('OCREngine', '2');
+
+            const message = Soup.form_request_new_from_multipart(
+              OCR_URL,
+              multipart
+            );
+
+            session.queue_message(
+              message,
+              function (result, task) {
+                if (message.status_code !== 200) {
+                  lg(
+                    '[UIImageRenderer::_processOCRCapture]',
+                    'Error occurred during OCR processing:',
+                    message.status_code
+                  );
+                  this._ocrResultAvailable = false;
+                  return;
+                }
+
+                const data = JSON.parse(message.response_body.data);
+                const extract = data?.ParsedResults?.[0]?.ParsedText?.trim();
+                lg(
+                  '[UIImageRenderer::_processOCRCapture]',
+                  'extract:',
+                  extract,
+                  'length:',
+                  extract?.length ?? 0
+                );
+                if (extract !== null && extract.length !== 0) {
+                  this._ocrText.clutter_text.set_text(extract);
+                }
+                this._ocrResultAvailable = true;
+              }.bind(this)
+            );
+          }.bind(this)
+        );
+      } else {
+        this._ocrIndicator.set_size(0, 0);
+      }
+    }
+
+    _updateOCRIndicator() {
+      let leftX = Math.min(this._originX, this._dragX);
+      let topY = Math.min(this._originY, this._dragY);
+      const rightX = Math.max(this._originX, this._dragX);
+      const bottomY = Math.max(this._originY, this._dragY);
+      const width = rightX - leftX + 1;
+      const height = bottomY - topY + 1;
+      let overshootX = 0,
+        overshootY = 0;
+
+      leftX = leftX - this._topParent.x - this._topParent.border_width;
+      topY = topY - this._topParent.y - this._topParent.border_width;
+      if (leftX < 0) {
+        overshootX = leftX;
+        leftX = 0;
+      }
+      if (topY < 0) {
+        overshootY = topY;
+        topY = 0;
+      }
+
+      this._ocrIndicator.set_position(leftX, topY);
+      this._ocrIndicator.set_size(width + overshootX, height + overshootY);
+    }
+
+    _updateCursor(cursorX, cursorY) {
+      global.display.set_cursor(
+        this._isInOCRSession ? Meta.Cursor.CROSSHAIR : Meta.Cursor.DEFAULT
+      );
+    }
+
+    get ocrReady() {
+      return this._ocrResultAvailable === true;
+    }
+
     _onKeyPress(event) {
       const symbol = event.keyval;
       if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
@@ -1430,14 +1692,18 @@ const UIImageRenderer = GObject.registerClass(
           this._reload();
         } else if (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C) {
           if (event.modifier_state & Clutter.ModifierType.SHIFT_MASK) {
-            this._copyToClipboard(
+            this._copyImageToClipboard(
               this._visibleRegionPixbuf,
               'Viewport yanked!'
             );
+          } else if (!this._isInOCRSession) {
+            this._copyImageToClipboard(this._pixbuf, 'Image yanked!');
           } else {
-            this._copyToClipboard(this._pixbuf, 'Image yanked!');
+            this._copyTextToClipboard(this._ocrText.get_text(), 'Text copied');
           }
         }
+      } else if (symbol === Clutter.KEY_o || symbol === Clutter.KEY_O) {
+        this._openOCRToolkit();
       }
       return Clutter.EVENT_PROPAGATE;
     }
@@ -1450,7 +1716,13 @@ const UIImageRenderer = GObject.registerClass(
       this._dragButton = button;
       this._dragGrab = global.stage.grab(this);
       [this._dragX, this._dragY] = [event.x, event.y];
-      global.display.set_cursor(Meta.Cursor.DND_IN_DRAG);
+      [this._originX, this._originY] = [event.x, event.y];
+      if (this._isInOCRSession) {
+        this._ocrText.hide();
+        global.display.set_cursor(Meta.Cursor.CROSSHAIR);
+      } else {
+        global.display.set_cursor(Meta.Cursor.DND_IN_DRAG);
+      }
 
       return Clutter.EVENT_STOP;
     }
@@ -1464,6 +1736,9 @@ const UIImageRenderer = GObject.registerClass(
 
       lg('[UIImageRenderer::_onRelease]');
       this._stopDrag();
+      if (this._isInOCRSession) {
+        this._processOCRCapture();
+      }
 
       const [x, y] = [event.x, event.y];
       global.display.set_cursor(Meta.Cursor.DEFAULT);
@@ -1482,8 +1757,9 @@ const UIImageRenderer = GObject.registerClass(
 
     _onMotion(event, sequence) {
       const [x, y] = [event.x, event.y];
-      if (!this._dragButton || !this._isPanningEnabled) {
-        return Clutter.EVENT_PROPAGATE;
+      if (!this._dragButton) {
+        this._updateCursor();
+        return Clutter.EVENT_STOP;
       }
 
       let dx = Math.round(x - this._dragX);
@@ -1494,40 +1770,43 @@ const UIImageRenderer = GObject.registerClass(
         this._pixbuf.get_height()
       ];
 
-      const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
-      if (maxWidth > this.width) {
-        this._xpos += panDirection * dx;
-        if (this._xpos < 0) {
-          const overshootX = -this._xpos;
-          this._xpos += overshootX;
-          dx -= overshootX;
+      if (!this._isInOCRSession) {
+        const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
+        if (maxWidth > this.width) {
+          this._xpos += panDirection * dx;
+          if (this._xpos < 0) {
+            const overshootX = -this._xpos;
+            this._xpos += overshootX;
+            dx -= overshootX;
+          }
+          if (this._xpos + this.width - 1 >= maxWidth) {
+            const overshootX = maxWidth - (this._xpos + this.width - 1);
+            this._xpos += overshootX;
+            dx -= overshootX;
+          }
+        } else {
+          dx = 0;
         }
-        if (this._xpos + this.width - 1 >= maxWidth) {
-          const overshootX = maxWidth - (this._xpos + this.width - 1);
-          this._xpos += overshootX;
-          dx -= overshootX;
-        }
-      } else {
-        dx = 0;
-      }
 
-      if (maxHeight > this.height) {
-        this._ypos += panDirection * dy;
-        if (this._ypos < 0) {
-          const overshootY = -this._ypos;
-          this._ypos += overshootY;
-          dy -= overshootY;
+        if (maxHeight > this.height) {
+          this._ypos += panDirection * dy;
+          if (this._ypos < 0) {
+            const overshootY = -this._ypos;
+            this._ypos += overshootY;
+            dy -= overshootY;
+          }
+          if (this._ypos + this.height - 1 >= maxHeight) {
+            const overshootY = maxHeight - (this._ypos + this.height - 1);
+            this._ypos += overshootY;
+            dy -= overshootY;
+          }
+        } else {
+          dy = 0;
         }
-        if (this._ypos + this.height - 1 >= maxHeight) {
-          const overshootY = maxHeight - (this._ypos + this.height - 1);
-          this._ypos += overshootY;
-          dy -= overshootY;
-        }
+        this._canvas.invalidate();
       } else {
-        dy = 0;
+        this._updateOCRIndicator();
       }
-
-      this._canvas.invalidate();
 
       this._dragX += dx;
       this._dragY += dy;
@@ -1581,6 +1860,88 @@ const UIImageRenderer = GObject.registerClass(
       }
 
       return super.vfunc_leave_event(event);
+    }
+  }
+);
+
+const OcrTip = GObject.registerClass(
+  class OcrTip extends St.Label {
+    _init(widget, container, params) {
+      super._init(params);
+
+      this._widget = widget;
+      this._container = container;
+      this._timeoutId = null;
+    }
+
+    open() {
+      if (this._timeoutId) return;
+
+      this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+        this.opacity = 0;
+        this.show();
+
+        const x = this._widget.x + this._widget.width;
+        const y = this._widget.y + this._widget.height;
+        this.set_position(x, y);
+        this.ease({
+          opacity: 255,
+          duration: 150,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD
+        });
+
+        this._timeoutId = null;
+        return GLib.SOURCE_REMOVE;
+      });
+      GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] tooltip.open');
+    }
+
+    close() {
+      if (this._timeoutId) {
+        GLib.source_remove(this._timeoutId);
+        this._timeoutId = null;
+        return;
+      }
+
+      if (!this.visible) return;
+
+      this.remove_all_transitions();
+      this.ease({
+        opacity: 0,
+        duration: 100,
+        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        onComplete: () => this.hide()
+      });
+    }
+
+    _processImage(pixbuf) {}
+
+    _onMotion(event) {
+      return Clutter.EVENT_STOP;
+    }
+
+    vfunc_button_press_event(event) {
+      const button = event.button;
+      if (
+        button === Clutter.BUTTON_PRIMARY ||
+        button === Clutter.BUTTON_SECONDARY
+      ) {
+        if (this._container.ocrReady) {
+          this._container._copyTextToClipboard(this.get_text(), 'Text copied');
+        }
+        return Clutter.EVENT_STOP;
+      }
+
+      return Clutter.EVENT_PROPAGATE;
+    }
+
+    vfunc_motion_event(event) {
+      return this._onMotion(event, null);
+    }
+
+    vfunc_enter_event(event) {
+      lg('[Tooltip::vfunc_enter_event]');
+      return super.vfunc_enter_event(event);
     }
   }
 );
