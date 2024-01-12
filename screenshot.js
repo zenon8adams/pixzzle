@@ -109,7 +109,7 @@ const Tooltip = GObject.registerClass(
         this._timeoutId = null;
         return GLib.SOURCE_REMOVE;
       });
-      GLib.Source.set_name_by_id(this._timeoutId, '[gnome-shell] tooltip.open');
+      GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] tooltip.open');
     }
 
     close() {
