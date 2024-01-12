@@ -79,5 +79,13 @@
         follow the drag direction).
       </description>
     </key>
+    <key name="ocr-api" type="s">
+      <default>'helloworld'</default>
+      <summary>Ocr-Space API Key</summary>
+      <description>    
+        Set your Ocr-Space API KEY to extend usage time
+        for your OCR needs (i.e Your image to text extraction).
+      </description>
+    </key>
   </schema>
 </schemalist>

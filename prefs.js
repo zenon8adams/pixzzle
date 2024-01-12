@@ -38,7 +38,8 @@ var Fields = {
   SHOTBUTTON_FG_COLOR: 'shotbutton-fg-color',
   SWAP_VIEWS: 'swap-views',
   DISABLE_TILE_MODE: 'disable-tile-mode',
-  NATURAL_PANNING: 'natural-panning'
+  NATURAL_PANNING: 'natural-panning',
+  OCR_API: 'ocr-api'
 };
 
 const COLUMN_ID = 0;
@@ -139,6 +140,13 @@ const SettingsApp = GObject.registerClass(
         toggler.active = state;
       });
 
+      this.field_ocr_api_key = new Gtk.Entry({
+        text: SettingsSchema.get_string(Fields.OCR_API)
+      });
+      this.field_ocr_api_key.connect('changed', (box) => {
+        SettingsSchema.set_string(Fields.OCR_API, box.text);
+      });
+
       this.field_keybinding = createKeybindingWidget(SettingsSchema);
       this.binding_rows = {};
 
@@ -228,6 +236,12 @@ const SettingsApp = GObject.registerClass(
         halign: Gtk.Align.START
       });
 
+      const ocrKeyLabel = new Gtk.Label({
+        label: _('Set up `ocr-space` API KEY'),
+        hexpand: true,
+        halign: Gtk.Align.START
+      });
+
       const bindWarningLabel = new Gtk.Label({
         hexpand: true,
         halign: Gtk.Align.END
@@ -267,6 +281,7 @@ const SettingsApp = GObject.registerClass(
       addRow(swapViewsLabel, this.field_swap_views);
       //   addRow(disableTileLabel, this.field_tile_mode);
       addRow(naturalPanLabel, this.field_natural_panning);
+      addRow(ocrKeyLabel, this.field_ocr_api_key);
       addRow(null, this.field_keybinding);
       addRow(null, bindWarningLabel);
       addRow(null, this.reset_button);
