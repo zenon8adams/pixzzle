@@ -263,3 +263,12 @@
   outline: none;
   border: none;
 }
+
+.pixzzle-ui-ocrtip-error {
+  color: white;
+  background-color: red;
+  border-radius: 4px;
+  padding: 6px 12px;
+  outline: none;
+  border: none;
+}

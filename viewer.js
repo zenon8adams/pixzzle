@@ -1202,7 +1202,8 @@ const UIImageRenderer = GObject.registerClass(
   {
     Signals: {
       'lock-axis': { param_types: [Object.prototype] },
-      'clean-slate': {}
+      'clean-slate': {},
+      'ocr-cancelled': {}
     }
   },
   class UIImageRenderer extends St.Widget {
@@ -1285,6 +1286,7 @@ const UIImageRenderer = GObject.registerClass(
         this._render(deltaX, deltaY, width, height);
       } else {
         this._isPanningEnabled = false;
+        this._closeOCRToolkit();
       }
     }
 
@@ -1475,13 +1477,13 @@ const UIImageRenderer = GObject.registerClass(
     }
 
     _updateToolkits() {
-      this._updateOCRToolkit();
+      this._closeOCRToolkit();
     }
 
-    _updateOCRToolkit() {
-      this._isInOCRSession = !this._isPanningEnabled;
-      this._ocrIndicator.visible = this._isInOCRSession;
-      this._ocrText.hide();
+    _closeOCRToolkit() {
+      this._isInOCRSession = false;
+      this._ocrIndicator.hide();
+      this._ocrText.close();
     }
 
     _openOCRToolkit() {
@@ -1492,11 +1494,13 @@ const UIImageRenderer = GObject.registerClass(
       // Perform ocr
       lg('[UIImageRenderer::_onKeyPress]', 'starting ocr');
       this._isInOCRSession = !this._isInOCRSession;
-      this._ocrIndicator.visible = this._isInOCRSession;
-      this._ocrIndicator.set_size(0, 0);
-      if (!this._ocrIndicator.visible) {
-        this._ocrText.hide();
+      if (this._isInOCRSession) {
+        this._ocrIndicator.show();
+      } else {
+        this._ocrIndicator.hide();
+        this._ocrText.close();
       }
+      this._ocrIndicator.set_size(0, 0);
       this._updateCursor();
     }
 
@@ -1572,10 +1576,9 @@ const UIImageRenderer = GObject.registerClass(
           this._ocrResultAvailable = false;
         }
 
-        this._ocrText.open();
-        this._ocrText.clutter_text.set_text('Loading...');
+        this._ocrText.open('Loading...', true /* instantly */);
 
-        const session = new Soup.Session({ ssl_strict: false });
+        this._session = new Soup.Session({ ssl_strict: false });
         const stream = Gio.MemoryOutputStream.new_resizable();
 
         this._ocrCancellable = new Gio.Cancellable();
@@ -1605,30 +1608,65 @@ const UIImageRenderer = GObject.registerClass(
               multipart
             );
 
-            session.queue_message(
+            this._session.queue_message(
               message,
               function (result, task) {
-                if (message.status_code !== 200) {
+                const status = message.status_code;
+                if (status == Soup.Status.CANCELLED) {
+                  return;
+                }
+                if (status !== Soup.Status.OK) {
                   lg(
                     '[UIImageRenderer::_processOCRCapture]',
                     'Error occurred during OCR processing:',
-                    message.status_code
+                    status,
+                    message.response_body.length,
+                    Soup.Status.get_phrase(message.status_code)
                   );
                   this._ocrResultAvailable = false;
+                  if (
+                    status >= Soup.Status.CANT_RESOLVE &&
+                    status <= Soup.Status.CANT_CONNECT_PROXY
+                  ) {
+                    this._ocrText.error(
+                      'Unable to connect.\n' +
+                        'Check your internet connection\n' +
+                        'and try again.'
+                    );
+                  } else if (status === Soup.Status.FORBIDDEN) {
+                    this._ocrText.error(
+                      'Your API KEY is invalid.\n' +
+                        'Visit https://ocr-space.com\n' +
+                        'to renew your KEY'
+                    );
+                  } else {
+                    this._ocrText.error(
+                      Soup.Status.get_phrase(message.status_code)
+                    );
+                  }
+
                   return;
                 }
 
-                const data = JSON.parse(message.response_body.data);
-                const extract = data?.ParsedResults?.[0]?.ParsedText?.trim();
+                const data = message.response_body.data;
+                const obj = JSON.parse(
+                  message.response_body.length === 0 ? '{}' : data
+                );
+                const extract =
+                  obj?.ParsedResults?.[0]?.ParsedText?.trim() ?? '';
                 lg(
                   '[UIImageRenderer::_processOCRCapture]',
+                  'data:',
+                  data,
                   'extract:',
                   extract,
                   'length:',
                   extract?.length ?? 0
                 );
                 if (extract !== null && extract.length !== 0) {
-                  this._ocrText.clutter_text.set_text(extract);
+                  this._ocrText.open(extract);
+                } else {
+                  this._ocrText.error('Unable to extract information');
                 }
                 this._ocrResultAvailable = true;
               }.bind(this)
@@ -1638,6 +1676,13 @@ const UIImageRenderer = GObject.registerClass(
       } else {
         this._ocrIndicator.set_size(0, 0);
       }
+    }
+
+    _abortOCRSession() {
+      this._ocrIndicator.hide();
+      this._ocrText.close();
+      this._session?.abort();
+      this.emit('ocr-cancelled');
     }
 
     _updateOCRIndicator() {
@@ -1665,7 +1710,7 @@ const UIImageRenderer = GObject.registerClass(
       this._ocrIndicator.set_size(width + overshootX, height + overshootY);
     }
 
-    _updateCursor(cursorX, cursorY) {
+    _updateCursor() {
       global.display.set_cursor(
         this._isInOCRSession ? Meta.Cursor.CROSSHAIR : Meta.Cursor.DEFAULT
       );
@@ -1677,7 +1722,10 @@ const UIImageRenderer = GObject.registerClass(
 
     _onKeyPress(event) {
       const symbol = event.keyval;
-      if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
+      if (symbol === Clutter.KEY_Escape) {
+        this._abortOCRSession();
+        return Clutter.EVENT_STOP;
+      } else if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
         if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
           this._pixbuf = this._pixbuf.rotate_simple(
             GdkPixbuf.PixbufRotation.CLOCKWISE
@@ -1705,6 +1753,7 @@ const UIImageRenderer = GObject.registerClass(
       } else if (symbol === Clutter.KEY_o || symbol === Clutter.KEY_O) {
         this._openOCRToolkit();
       }
+
       return Clutter.EVENT_PROPAGATE;
     }
 
@@ -1718,7 +1767,8 @@ const UIImageRenderer = GObject.registerClass(
       [this._dragX, this._dragY] = [event.x, event.y];
       [this._originX, this._originY] = [event.x, event.y];
       if (this._isInOCRSession) {
-        this._ocrText.hide();
+        this._ocrText.close();
+        this._ocrIndicator.show();
         global.display.set_cursor(Meta.Cursor.CROSSHAIR);
       } else {
         global.display.set_cursor(Meta.Cursor.DND_IN_DRAG);
@@ -1872,28 +1922,70 @@ const OcrTip = GObject.registerClass(
       this._widget = widget;
       this._container = container;
       this._timeoutId = null;
+
+      this.connect('destroy', this._onDestroy.bind(this));
+      this._container.connect(
+        'ocr-cancelled',
+        function () {
+          this._openCancelled = true;
+          this.close();
+        }.bind(this)
+      );
     }
 
-    open() {
-      if (this._timeoutId) return;
+    open(message, instantly = false) {
+      this.remove_style_class_name('pixzzle-ui-ocrtip-error');
+      if (this._timeoutId) {
+        this.close();
+      }
 
-      this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-        this.opacity = 0;
-        this.show();
+      this._open(
+        function () {
+          const x = this._widget.x - this.width / 2;
+          const y = this._widget.y;
+          this.show();
+          this.set_text(message);
+          this.set_position(x, y);
+        }.bind(this),
+        instantly
+      );
+    }
 
-        const x = this._widget.x + this._widget.width;
-        const y = this._widget.y + this._widget.height;
-        this.set_position(x, y);
+    _open(action, instantly = false) {
+      if (instantly) {
+        this.set_opacity(0);
+        action();
         this.ease({
           opacity: 255,
           duration: 150,
           mode: Clutter.AnimationMode.EASE_OUT_QUAD
         });
+        this._openCancelled = false;
+        return;
+      }
 
-        this._timeoutId = null;
-        return GLib.SOURCE_REMOVE;
-      });
-      GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] tooltip.open');
+      this._timeoutId = GLib.timeout_add(
+        GLib.PRIORITY_DEFAULT,
+        300,
+        function () {
+          if (this._openCancelled) {
+            this._openCancelled = false;
+            this.close();
+          } else {
+            this.set_opacity(0);
+            this.show();
+            action();
+            this.ease({
+              opacity: 255,
+              duration: 150,
+              mode: Clutter.AnimationMode.EASE_OUT_QUAD
+            });
+          }
+          this._timeoutId = null;
+          return GLib.SOURCE_REMOVE;
+        }.bind(this)
+      );
+      GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] ocrtip._open');
     }
 
     close() {
@@ -1914,7 +2006,74 @@ const OcrTip = GObject.registerClass(
       });
     }
 
-    _processImage(pixbuf) {}
+    error(message) {
+      lg('[OcrTip::error]', 'error:', message, this._timeoutId);
+      if (this._timeoutId) {
+        this.close();
+      }
+
+      this._open(
+        function () {
+          const style_classes = this.get_style_class_name()?.split(' ') ?? [];
+          const rem_style_classes = style_classes.filter(
+            (style_class) => style_class !== 'pixzzle-ui-ocrtip-error'
+          );
+
+          rem_style_classes.push('pixzzle-ui-ocrtip-error');
+          this.set_style_class_name(rem_style_classes.join(' '));
+          this.set_text(message);
+          this._vibrateWithDamping();
+        }.bind(this)
+      );
+    }
+
+    _vibrateWithDamping() {
+      let originalPosition = this._widget.x - this.width / 2;
+      let counter = 0;
+      // Change this value to adjust the rate of damping
+      let dampingFactor = 1;
+      function frame() {
+        this.__ocrTipTimeoutId = null;
+        counter += 0.9;
+        // This value determines how quickly the vibration dampens
+        dampingFactor *= 0.86;
+        const offset = Math.sin(counter) * 80 * dampingFactor;
+        // The amplitude of the vibration decreases over time
+        this.set_position(originalPosition + offset, this._widget.y);
+
+        if (dampingFactor < 0.01) {
+          // When the vibration is small enough, stop the animation
+          // and reset the position
+          this.set_position(originalPosition, this._widget.y);
+        } else {
+          this.__ocrTipTimeoutId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT,
+            1000 / 60,
+            frame.bind(this)
+          );
+          GLib.Source.set_name_by_id(
+            this.__ocrTipTimeoutId,
+            '[pixzzle-ui] OcrTip.error.vibrateWithDamping.frame'
+          );
+        }
+
+        return GLib.SOURCE_REMOVE;
+      }
+
+      frame.bind(this)();
+    }
+
+    _onDestroy() {
+      if (this._timeoutId) {
+        GLib.Source.remove(this._timeoutId);
+        this._timeoutId = null;
+      }
+
+      if (this.__ocrTipTimeoutId) {
+        GLib.Source.remove(this.__ocrTipTimeoutId);
+        this.__ocrTipTimeoutId = null;
+      }
+    }
 
     _onMotion(event) {
       return Clutter.EVENT_STOP;
