@@ -56,12 +56,14 @@ const { UIShutter } = Me.imports.screenshot;
 const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
 const Prefs = Me.imports.prefs;
+const { getActionWatcher } = Me.imports.watcher;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const FULLY_OPAQUE = 255;
+const MODAL_CHECK_INTERVAL = 500;
 /*
  * Store metadata in image ancillary chunk
  * to detect if the image is smaller than
@@ -111,6 +113,17 @@ var UIMainViewer = GObject.registerClass(
       this._emptyView = true;
 
       Main.layoutManager.addTopChrome(this);
+
+      /*
+       * Watch for new modal dialog and hide viewer
+       * when there's a change in the number of dialogs
+       * visible as defined by `Main.modalCount`.
+       */
+      this._modalWatcher = getActionWatcher().addWatch(MODAL_CHECK_INTERVAL, {
+        reaction: this._close.bind(this),
+        compare: (one, other) => one === other,
+        action: () => Main.modalCount
+      });
 
       this.reset();
 
@@ -648,6 +661,11 @@ var UIMainViewer = GObject.registerClass(
         this._showTimeoutId = null;
       }
 
+      if (this._modalWatcher) {
+        this._modalWatcher.remove();
+        this._modalWatcher = null;
+      }
+
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
       this._unbindShortcuts();
@@ -672,11 +690,16 @@ var UIMainViewer = GObject.registerClass(
       });
       GLib.Source.set_name_by_id(
         this._showTimeoutId,
-        '[gnome-shell] UiMainViewer._showUI'
+        '[pixzzle] UiMainViewer._showUI'
       );
     }
 
     _toggleUI() {
+      // Don't open if there's a pop-up dialog
+      if (Main.modalCount > 0) {
+        return;
+      }
+
       this._toggleTimeoutId = GLib.timeout_add(
         GLib.PRIORITY_DEFAULT,
         300,
@@ -705,7 +728,7 @@ var UIMainViewer = GObject.registerClass(
       );
       GLib.Source.set_name_by_id(
         this._toggleTimeoutId,
-        '[gnome-shell] UiMainViewer._toggleUI'
+        '[pixzzle] UiMainViewer._toggleUI'
       );
     }
 
