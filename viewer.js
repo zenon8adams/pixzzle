@@ -112,7 +112,7 @@ var UIMainViewer = GObject.registerClass(
       this._tilingDisabled = false;
       this._emptyView = true;
 
-      Main.layoutManager.addTopChrome(this);
+      Main.layoutManager.addChrome(this);
 
       /*
        * Watch for new modal dialog and hide viewer
@@ -185,7 +185,8 @@ var UIMainViewer = GObject.registerClass(
       this._splitViewXContainer = new UILayout({
         name: 'UISplitViewLayout',
         vertical: false,
-        x_expand: true
+        x_expand: true,
+        reactive: true
       });
       this._topMostContainer.add_child(this._splitViewXContainer);
 
@@ -205,7 +206,7 @@ var UIMainViewer = GObject.registerClass(
       });
       this._topMostContainer.add_child(this._buttonBox);
 
-      this._settingsButton = new St.Button({
+      this._settingsButton = new UIButton({
         style_class: 'pixzzle-ui-settings-button',
         label: 'settings',
         child: new St.Icon({ icon_name: 'org.gnome.Settings-symbolic' }),
@@ -224,11 +225,12 @@ var UIMainViewer = GObject.registerClass(
       });
       this._settingsButton.connect('enter-event', this._stopDrag.bind(this));
 
-      this._screenshotButton = new St.Button({
+      this._screenshotButton = new UIButton({
         style_class: 'pixzzle-ui-screenshot-button',
         label: _('Add New'),
         x_expand: false,
-        x_align: Clutter.ActorAlign.END
+        x_align: Clutter.ActorAlign.END,
+        reactive: true
       });
       this._buttonBox.add_child(this._screenshotButton);
       this._screenshotButton.connect('clicked', () =>
@@ -666,6 +668,11 @@ var UIMainViewer = GObject.registerClass(
         this._modalWatcher = null;
       }
 
+      if (this._toggleTimeoutId) {
+        GLib.Source.remove(this._toggleTimeoutId);
+        this._toggleTimeoutId = null;
+      }
+
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
       this._unbindShortcuts();
@@ -697,13 +704,14 @@ var UIMainViewer = GObject.registerClass(
     _toggleUI() {
       // Don't open if there's a pop-up dialog
       if (Main.modalCount > 0) {
+        this._close();
         return;
       }
 
       this._toggleTimeoutId = GLib.timeout_add(
         GLib.PRIORITY_DEFAULT,
         300,
-        () => {
+        function () {
           const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
           this.opacity = newOpacity;
           if (!this._isActive) {
@@ -724,7 +732,7 @@ var UIMainViewer = GObject.registerClass(
           lg('[UIMainViewer::_toggleUI]');
           this._toggleTimeoutId = null;
           return GLib.SOURCE_REMOVE;
-        }
+        }.bind(this)
       );
       GLib.Source.set_name_by_id(
         this._toggleTimeoutId,
@@ -841,48 +849,14 @@ var UIMainViewer = GObject.registerClass(
         }
       } else if (x - leftX > 0 && rightX - x > 0) {
         if (y - topY > 0 && bottomY - y > 0) {
-          if (!this._isInRestrictedArea(x, y, leftX, topY, rightX, bottomY)) {
-            lg(desc, 'MOVE_OR_RESIZE');
-            return Meta.Cursor.MOVE_OR_RESIZE_WINDOW;
-          }
+          lg(desc, 'MOVE_OR_RESIZE');
+          return Meta.Cursor.MOVE_OR_RESIZE_WINDOW;
         }
       }
 
       lg('[UIMainViewer::_computeCursorType]', 'Setting cursor to DEFAULT');
 
       return Meta.Cursor.DEFAULT;
-    }
-
-    _isInRestrictedArea(x, y, leftX, topY, rightX, bottomY) {
-      const offset = this.border_width;
-      const spacing = this._topMostContainer.spacing;
-      const buttonBoxSpacing = this._buttonBox.spacing;
-
-      const shotWidth = this._screenshotButton.width;
-      const shotHeight = this._screenshotButton.height;
-      const shotX = rightX - offset - shotWidth;
-      const shotY = bottomY - offset - shotHeight;
-      const shotMargin = offset + spacing + shotHeight;
-
-      const settingsWidth = this._settingsButton.width;
-      const settingsHeight = this._settingsButton.height;
-      const settingsX = shotX - buttonBoxSpacing - settingsWidth;
-      const settingsY = shotY;
-
-      return !(
-        x - leftX < offset ||
-        rightX - x < offset ||
-        y - topY < offset ||
-        (bottomY - y < shotMargin &&
-          (x < shotX ||
-            y < shotY ||
-            x > shotX + shotWidth ||
-            y > shotY + shotHeight) &&
-          (x < settingsX ||
-            y < settingsY ||
-            x > settingsX + settingsWidth ||
-            y > settingsY + settingsWidth))
-      );
     }
 
     _stopDrag() {
@@ -1964,7 +1938,7 @@ const OcrTip = GObject.registerClass(
 
       this._open(
         function () {
-          const x = this._widget.x - this.width / 2;
+          const x = this._widget.x;
           const y = this._widget.y;
           this.show();
           this.set_text(message);
@@ -2137,12 +2111,13 @@ const UIThumbnailViewer = GObject.registerClass(
     _init(params) {
       super._init({ ...params, y_expand: true });
 
-      this._scrollView = new St.ScrollView({
+      this._scrollView = new UIScrollView({
         style_class: 'pixzzle-ui-thumbnail-scrollview',
         hscrollbar_policy: St.PolicyType.EXTERNAL,
         vscrollbar_policy: St.PolicyType.EXTERNAL,
         enable_mouse_scrolling: true,
-        y_expand: true
+        y_expand: true,
+        reactive: true
       });
       this.add_child(this._scrollView);
       this._scrollView.set_overlay_scrollbars(false);
@@ -2425,6 +2400,39 @@ const UIPreview = GObject.registerClass(
   }
 );
 
+/*
+ *  Wrapper classes are provided to override the computation
+ *  of cursor type in `UIMainViewer`. This way, we don't
+ *  have to handle extra computation of what the cursor has
+ *  to be in these views, we just update the cursor type
+ *  in these widgets.
+ */
+const UIButton = GObject.registerClass(
+  class UIButton extends St.Button {
+    _init(params) {
+      super._init(params);
+    }
+
+    vfunc_motion_event(event) {
+      return Clutter.EVENT_STOP;
+    }
+  }
+);
+
+
+const UIScrollView = GObject.registerClass(
+    class UIScrollView extends St.ScrollView {
+        _init(params) {
+            super._init(params);
+        }
+
+        vfunc_motion_event(event) {
+            global.display.set_cursor(Meta.Cursor.DEFAULT);
+            return Clutter.EVENT_STOP;
+        }
+    }
+);
+
 const UILayout = GObject.registerClass(
   class UILayout extends St.BoxLayout {
     _init(params) {
@@ -2446,6 +2454,10 @@ const UILayout = GObject.registerClass(
       }
 
       return this._bottom_padding;
+    }
+
+    vfunc_motion_event(event) {
+      return Clutter.EVENT_STOP;
     }
   }
 );
