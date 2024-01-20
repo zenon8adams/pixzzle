@@ -58,10 +58,10 @@ const _getShotStore = function () {
   return path;
 };
 
-var SHOT_STORE = _getShotStore(
-  GLib.get_user_cache_dir(),
-  'extension',
-  SCHEMA_NAME
-);
+function getShotsLocation() {
+  return _getShotStore(GLib.get_user_cache_dir(), 'extension', SCHEMA_NAME);
+}
 
-var THUMBNAIL_STORE = _getShotStore(SHOT_STORE.get_path(), '.thumbnail');
+function getThumbnailsLocation() {
+  return _getShotStore(getShotsLocation().get_path(), '.thumbnail');
+}

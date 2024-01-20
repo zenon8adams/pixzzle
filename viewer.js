@@ -50,8 +50,13 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext;
 const _ = Gettext.domain('pixzzle').gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE, THUMBNAIL_STORE } =
-  Me.imports.utils;
+const {
+  inflateSettings,
+  SCHEMA_NAME,
+  lg,
+  getShotsLocation,
+  getThumbnailsLocation
+} = Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
 const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
@@ -466,11 +471,7 @@ var UIMainViewer = GObject.registerClass(
         return;
       }
 
-      if (typeof ExtensionUtils.openPrefs === 'function') {
-        ExtensionUtils.openPrefs();
-      } else {
-        Util.spawn(['gnome-shell-extension-prefs', Me.uuid]);
-      }
+      ExtensionUtils.openPrefs();
     }
 
     _settingsWindow() {
@@ -2187,7 +2188,7 @@ const UIThumbnailViewer = GObject.registerClass(
     }
 
     async _loadShots() {
-      let snapshotDir = SHOT_STORE;
+      let snapshotDir = getShotsLocation();
       if (!snapshotDir.query_exists(null)) {
         return;
       }
@@ -2373,7 +2374,7 @@ const UIPreview = GObject.registerClass(
     }
 
     _getThumbnail(filename) {
-      const dir = THUMBNAIL_STORE;
+      const dir = getThumbnailsLocation();
       const base = GLib.path_get_basename(filename);
       const thumbnail = GLib.build_filenamev([dir.get_path(), base]);
       if (GLib.file_test(thumbnail, GLib.FileTest.EXISTS)) {

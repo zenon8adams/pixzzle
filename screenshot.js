@@ -43,7 +43,7 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } = Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation } = Me.imports.utils;
 
 const IconLabelButton = GObject.registerClass(
   class IconLabelButton extends St.Button {
@@ -1571,7 +1571,7 @@ var UIShutter = GObject.registerClass(
       );
 
       if (!disableSaveToDisk) {
-        const dir = SHOT_STORE;
+        const dir = getShotsLocation();
         const timestamp = time.format('%Y-%m-%d-%H-%M-%S');
         const name = fmt.format(timestamp);
 
