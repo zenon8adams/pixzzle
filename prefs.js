@@ -32,6 +32,7 @@ const { inflateSettings, SCHEMA_NAME, lg, SCREENSHOT_KEY, SHOT_STORE } =
 
 var Fields = {
   TOGGLE_VISIBILITY: 'toggle-visibility',
+  OPEN_SHUTTER: 'open-shutter',
   MAIN_BG_COLOR: 'main-bg-color',
   THUMBNAIL_BG_COLOR: 'thumbnail-bg-color',
   SHOTBUTTON_BG_COLOR: 'shotbutton-bg-color',
@@ -157,6 +158,13 @@ const SettingsApp = GObject.registerClass(
         _('Toggle shot manager')
       );
 
+      this.binding_rows[Fields.OPEN_SHUTTER] = addKeybinding(
+        this.field_keybinding.model,
+        SettingsSchema,
+        Fields.OPEN_SHUTTER,
+        _('Open shutter')
+      );
+
       this.reset_button = new Gtk.Button({
         hexpand: true,
         halign: Gtk.Align.END,
@@ -194,6 +202,12 @@ const SettingsApp = GObject.registerClass(
           this.field_keybinding,
           SettingsSchema,
           Fields.TOGGLE_VISIBILITY,
+          this.binding_rows
+        );
+        resetKeybinding(
+          this.field_keybinding,
+          SettingsSchema,
+          Fields.OPEN_SHUTTER,
           this.binding_rows
         );
       });
@@ -248,7 +262,7 @@ const SettingsApp = GObject.registerClass(
       });
       bindWarningLabel.set_markup(
         `<span foreground="red" font_size="small"><i>` +
-          `${_('You cannot bind to `Ctrl+R` or `Ctrl+L`')}</i></span>`
+          `${_('You cannot bind to `Ctrl+R`, `Ctrl+L` or `O`')}</i></span>`
       );
 
       const addRow = ((main) => {
@@ -409,11 +423,8 @@ function createKeybindingWidget(SettingsSchema) {
   return treeView;
 }
 
-const ROTATE_CLOCKWISE_CONTROL = '<Control>r';
-const ROTATE_ANTICLOCKWISE_CONTROL = '<Control>l';
+const INTERNAL_CONTROL_TABLE = ['<Control>r', '<Control>l', 'o', 'O'];
 function isInternalControlCode(id, accel) {
   lg('[Prefs.js::isInternalControlCode]', 'accel:', accel);
-  return (
-    accel == ROTATE_CLOCKWISE_CONTROL || accel == ROTATE_ANTICLOCKWISE_CONTROL
-  );
+  return INTERNAL_CONTROL_TABLE.indexOf(accel) !== -1;
 }

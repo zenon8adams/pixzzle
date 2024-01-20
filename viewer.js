@@ -57,13 +57,14 @@ const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
 const Prefs = Me.imports.prefs;
 const { getActionWatcher } = Me.imports.watcher;
+const { Timer } = Me.imports.timer;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const FULLY_OPAQUE = 255;
-const MODAL_CHECK_INTERVAL = 500;
+const MODAL_CHECK_INTERVAL = 300;
 /*
  * Store metadata in image ancillary chunk
  * to detect if the image is smaller than
@@ -119,11 +120,14 @@ var UIMainViewer = GObject.registerClass(
        * when there's a change in the number of dialogs
        * visible as defined by `Main.modalCount`.
        */
-      this._modalWatcher = getActionWatcher().addWatch(MODAL_CHECK_INTERVAL, {
-        reaction: this._close.bind(this),
-        compare: (one, other) => one === other,
-        action: () => Main.modalCount
-      });
+      this._modalWatcher = getActionWatcher(this).addWatch(
+        MODAL_CHECK_INTERVAL,
+        {
+          reaction: this._close.bind(this, true /* instantly */),
+          compare: (one, other) => one === other,
+          action: () => Main.modalCount
+        }
+      );
 
       this.reset();
 
@@ -597,6 +601,10 @@ var UIMainViewer = GObject.registerClass(
         Prefs.Fields.TOGGLE_VISIBILITY,
         this._toggleUI.bind(this)
       );
+      this._bindShortcut(
+        Prefs.Fields.OPEN_SHUTTER,
+        this._showScreenshotView.bind(this)
+      );
     }
 
     _unbindShortcuts() {
@@ -633,7 +641,7 @@ var UIMainViewer = GObject.registerClass(
       theme_context.set_theme(theme);
     }
 
-    _close() {
+    _close(instantly = false) {
       this.remove_all_transitions();
       global.display.set_cursor(Meta.Cursor.DEFAULT);
       if (this._dragButton) {
@@ -641,12 +649,16 @@ var UIMainViewer = GObject.registerClass(
       }
       this._isActive = false;
       this._closeSettings();
-      this.ease({
-        opacity: 0,
-        duration: 200,
-        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        onComplete: this.hide.bind(this)
-      });
+      if (instantly) {
+        this.hide();
+      } else {
+        this.ease({
+          opacity: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: this.hide.bind(this)
+        });
+      }
       this._snapIndicator.hide();
     }
 
@@ -658,19 +670,9 @@ var UIMainViewer = GObject.registerClass(
         this._shutter = null;
       }
 
-      if (this._showTimeoutId) {
-        GLib.Source.remove(this._showTimeoutId);
-        this._showTimeoutId = null;
-      }
-
       if (this._modalWatcher) {
         this._modalWatcher.remove();
         this._modalWatcher = null;
-      }
-
-      if (this._toggleTimeoutId) {
-        GLib.Source.remove(this._toggleTimeoutId);
-        this._toggleTimeoutId = null;
       }
 
       Main.layoutManager.removeChrome(this._snapIndicator);
@@ -681,23 +683,22 @@ var UIMainViewer = GObject.registerClass(
     _showUI() {
       if (this._isActive) return;
 
-      this._showTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-        this.opacity = 0;
-        this.show();
-        this.ease({
-          opacity: 255,
-          duration: 150,
-          mode: Clutter.AnimationMode.EASE_OUT_QUAD
-        });
+      new Timer(this).add(
+        300,
+        function () {
+          this.opacity = 0;
+          this.show();
+          this.ease({
+            opacity: 255,
+            duration: 150,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD
+          });
 
-        lg('[UIMainViewer::_showUI]');
-        this._showTimeoutId = null;
-        this._isActive = true;
-        return GLib.SOURCE_REMOVE;
-      });
-      GLib.Source.set_name_by_id(
-        this._showTimeoutId,
-        '[pixzzle] UiMainViewer._showUI'
+          lg('[UIMainViewer::_showUI]');
+          this._isActive = true;
+          return GLib.SOURCE_REMOVE;
+        }.bind(this),
+        'UIMainViewer._showUI'
       );
     }
 
@@ -708,8 +709,7 @@ var UIMainViewer = GObject.registerClass(
         return;
       }
 
-      this._toggleTimeoutId = GLib.timeout_add(
-        GLib.PRIORITY_DEFAULT,
+      new Timer(this).add(
         300,
         function () {
           const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
@@ -730,13 +730,9 @@ var UIMainViewer = GObject.registerClass(
           });
 
           lg('[UIMainViewer::_toggleUI]');
-          this._toggleTimeoutId = null;
           return GLib.SOURCE_REMOVE;
-        }.bind(this)
-      );
-      GLib.Source.set_name_by_id(
-        this._toggleTimeoutId,
-        '[pixzzle] UiMainViewer._toggleUI'
+        }.bind(this),
+        'UIMainViewer._toggleUI'
       );
     }
 
@@ -2419,18 +2415,17 @@ const UIButton = GObject.registerClass(
   }
 );
 
-
 const UIScrollView = GObject.registerClass(
-    class UIScrollView extends St.ScrollView {
-        _init(params) {
-            super._init(params);
-        }
-
-        vfunc_motion_event(event) {
-            global.display.set_cursor(Meta.Cursor.DEFAULT);
-            return Clutter.EVENT_STOP;
-        }
+  class UIScrollView extends St.ScrollView {
+    _init(params) {
+      super._init(params);
     }
+
+    vfunc_motion_event(event) {
+      global.display.set_cursor(Meta.Cursor.DEFAULT);
+      return Clutter.EVENT_STOP;
+    }
+  }
 );
 
 const UILayout = GObject.registerClass(

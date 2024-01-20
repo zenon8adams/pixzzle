@@ -35,8 +35,8 @@ let _actionWatcher = null;
 /**
  * @returns {ActionWatcher}
  */
-function getActionWatcher() {
-  if (_actionWatcher == null) _actionWatcher = new ActionWatcher();
+function getActionWatcher(deleter) {
+  if (_actionWatcher == null) _actionWatcher = new ActionWatcher(deleter);
 
   return _actionWatcher;
 }
@@ -69,7 +69,7 @@ class ActionWatch {
 }
 
 class ActionWatcher {
-  constructor() {
+  constructor(deleter) {
     this._idleMonitor = global.backend.get_core_idle_monitor();
     this._idleMonitor.add_idle_watch(
       IDLE_TIME,
@@ -77,6 +77,15 @@ class ActionWatcher {
     );
     this._idle = this._idleMonitor.get_idletime() > IDLE_TIME;
     this._watches = [];
+    deleter.connect(
+      'destroy',
+      function () {
+        if (this._timeoutId) {
+          GLib.source_remove(this._timeoutId);
+          this._timeoutId = 0;
+        }
+      }.bind(this)
+    );
   }
 
   addWatch(interval, callbacks) {
@@ -129,10 +138,7 @@ class ActionWatcher {
       minInterval,
       this._onTimeout.bind(this)
     );
-    GLib.Source.set_name_by_id(
-      this._timeoutId,
-      '[pixzzle] this._onTimeout'
-    );
+    GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] this._onTimeout');
   }
 
   _onTimeout() {
