@@ -967,7 +967,7 @@ var UIShutter = GObject.registerClass(
   {
     Signals: {
       'begin-close': {},
-      'new-shot': { param_types: [GObject.TYPE_STRING] }
+      'new-shot': { param_types: [Object.prototype] }
     }
   },
   class UIShutter extends St.Widget {
@@ -1016,9 +1016,6 @@ var UIShutter = GObject.registerClass(
         })
       );
       this._stageScreenshotContainer.add_child(this._stageScreenshot);
-
-      this._cursor = new St.Widget();
-      this._stageScreenshotContainer.add_child(this._cursor);
 
       this._openingCoroutineInProgress = false;
       this._grabHelper = new GrabHelper.GrabHelper(this, {
@@ -1192,28 +1189,24 @@ var UIShutter = GObject.registerClass(
       });
       this._bottomRowContainer.add_child(this._showPointerButtonContainer);
 
-      this._showPointerButton = new St.Button({
-        style_class: 'pixzzle-ui-show-pointer-button',
+      const iconName = 'pixzzle-ui-ocr-action-symbolic.svg';
+      this._ocrActionButton = new St.Button({
+        style_class: 'pixzzle-ui-ocr-action-button',
         child: new St.Icon({
-          icon_name: 'screenshot-ui-show-pointer-symbolic'
+          gicon: Gio.icon_new_for_string(`${Me.path}/icons/${iconName}`),
+          style_class: 'pixzzle-ui-ocr-action-icon'
         }),
         toggle_mode: true
       });
-      this._showPointerButtonContainer.add_child(this._showPointerButton);
+      this._showPointerButtonContainer.add_child(this._ocrActionButton);
 
       this.add_child(
-        new Tooltip(this._showPointerButton, {
-          text: _('Show Pointer'),
+        new Tooltip(this._ocrActionButton, {
+          text: _('Perform OCR'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
         })
       );
-
-      this._showPointerButton.connect('notify::checked', () => {
-        const state = this._showPointerButton.checked;
-        this._cursor.visible = state;
-      });
-      this._cursor.visible = false;
 
       this._monitorBins = [];
       this._rebuildMonitorBins();
@@ -1342,18 +1335,6 @@ var UIShutter = GObject.registerClass(
           this._stageScreenshot.set_content(content);
           this._scale = scale;
 
-          if (cursorContent !== null) {
-            this._cursor.set_content(cursorContent);
-            this._cursor.set_position(cursorPoint.x, cursorPoint.y);
-
-            let [, w, h] = cursorContent.get_preferred_size();
-            w *= cursorScale;
-            h *= cursorScale;
-            this._cursor.set_size(w, h);
-
-            this._cursorScale = cursorScale;
-          }
-
           this._stageScreenshotContainer.show();
         } catch (e) {
           log(`Error capturing screenshot: ${e.message}`);
@@ -1412,8 +1393,6 @@ var UIShutter = GObject.registerClass(
       this._stageScreenshotContainer.hide();
 
       this._stageScreenshot.set_content(null);
-      this._cursor.set_content(null);
-
       this._areaSelector.reset();
     }
 
@@ -1430,7 +1409,7 @@ var UIShutter = GObject.registerClass(
       this.remove_all_transitions();
       this.ease({
         opacity: 0,
-        duration: 200,
+        duration: 300,
         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         onComplete: this._finishClosing.bind(this)
       });
@@ -1535,14 +1514,11 @@ var UIShutter = GObject.registerClass(
         const texture = content.get_texture();
         const geometry = this._getSelectedGeometry(true);
 
-        let cursorTexture = this._cursor.content?.get_texture();
-        if (!this._cursor.visible) cursorTexture = null;
-
         this._captureScreenshot(texture, geometry, this._scale, {
-          texture: cursorTexture ?? null,
-          x: this._cursor.x * this._scale,
-          y: this._cursor.y * this._scale,
-          scale: this._cursorScale
+          texture: null,
+          x: this._scale,
+          y: this._scale,
+          scale: this._scale
         }).catch((e) => logError(e, 'Error capturing screenshot'));
       }
     }
@@ -1626,7 +1602,10 @@ var UIShutter = GObject.registerClass(
 
       stream.close(null);
       const filename = this._storeScreenshot(stream.steal_as_bytes(), pixbuf);
-      this.emit('new-shot', filename);
+      this.emit('new-shot', {
+        name: filename,
+        ocr: this._ocrActionButton.checked
+      });
     }
 
     vfunc_key_press_event(event) {
@@ -1652,7 +1631,7 @@ var UIShutter = GObject.registerClass(
       }
 
       if (symbol === Clutter.KEY_p || symbol === Clutter.KEY_P) {
-        this._showPointerButton.checked = !this._showPointerButton.checked;
+        this._ocrActionButton.checked = !this._ocrActionButton.checked;
         return Clutter.EVENT_STOP;
       }
 

@@ -27,7 +27,8 @@ const {
   Shell,
   St,
   GdkPixbuf,
-  Soup
+  Soup,
+  Pango
 } = imports.gi;
 
 /*
@@ -251,8 +252,8 @@ var UIMainViewer = GObject.registerClass(
         name: 'UIThumbnailViewer',
         x_expand: false
       });
-      this._thumbnailView.connect('replace', (_, filename) => {
-        this._imageViewer._replace(filename);
+      this._thumbnailView.connect('replace', (_, shot) => {
+        this._imageViewer._replace(shot);
         this._emptyView = this._thumbnailView._shotCount() == 0;
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
@@ -435,8 +436,8 @@ var UIMainViewer = GObject.registerClass(
         );
         this._shutterNewShotHandler = this._shutter.connect(
           'new-shot',
-          (_, shotName) => {
-            this._thumbnailView._addNewShot(shotName);
+          (_, shot) => {
+            this._thumbnailView._addNewShot(shot);
           }
         );
       }
@@ -1251,6 +1252,22 @@ const UIImageRenderer = GObject.registerClass(
             (maxHeight - effectiveHeight) / 2
           );
           context.paint();
+
+          /*
+           * For a new screenshot, this._ocrScanOnEntry
+           * flag indicates that we want to perform
+           * ocr scan immediately we screenshot the
+           * image.
+           */
+          if (this._ocrScanOnEntry) {
+            this._ocrScanOnEntry = false;
+            this._openOCRToolkit();
+            this._ocrIndicator.x = (maxWidth - pixbuf.width) / 2;
+            this._ocrIndicator.y = (maxHeight - pixbuf.height) / 2;
+            this._ocrIndicator.width = this._pixbuf.width;
+            this._ocrIndicator.height = this._pixbuf.height;
+            this._doOCR(this._pixbuf);
+          }
         } else if (this._filename) {
           context.save();
           context.setOperator(Cairo.Operator.CLEAR);
@@ -1269,8 +1286,8 @@ const UIImageRenderer = GObject.registerClass(
         visible: false,
         reactive: true
       });
-      this._ocrText.clutter_text.set_selectable(true);
       this._ocrText.clutter_text.set_editable(false);
+      this._ocrText.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
       this._topParent.add_child(this._ocrText);
     }
 
@@ -1284,7 +1301,9 @@ const UIImageRenderer = GObject.registerClass(
       }
     }
 
-    _replace(newFile) {
+    _replace(shot) {
+      const newFile = shot.name;
+      this._ocrScanOnEntry = shot.ocr;
       lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
       if (newFile === null) {
         this._unload();
@@ -1303,6 +1322,7 @@ const UIImageRenderer = GObject.registerClass(
          */
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
         if (pixbuf != null) {
+          this._abortOCRSession();
           this._reOrient(-this._orientation, true /* flush */);
           this._pixbuf = pixbuf;
           this._filename = newFile;
@@ -1563,113 +1583,118 @@ const UIImageRenderer = GObject.registerClass(
           lg('[UIImageRenderer::_processOCRCapture]', 'pixbuf == (null)');
           return;
         }
-
-        if (this._ocrCancellable) {
-          this._ocrCancellable.cancel();
-          this._ocrCancellable = null;
-          this._ocrResultAvailable = false;
-        }
-
-        this._ocrText.open('Loading...', true /* instantly */);
-
-        this._session = new Soup.Session({ ssl_strict: false });
-        const stream = Gio.MemoryOutputStream.new_resizable();
-
-        this._ocrCancellable = new Gio.Cancellable();
-        pixbuf.save_to_streamv_async(
-          stream,
-          'png',
-          [],
-          [],
-          this._ocrCancellable,
-          function (pixbuf, task) {
-            if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
-              return;
-            }
-            stream.close(null);
-
-            const bytes = stream.steal_as_bytes();
-            const multipart = new Soup.Multipart(Soup.FORM_MIME_TYPE_MULTIPART);
-            multipart.append_form_string(
-              'base64Image',
-              'data:image/png;base64,' + GLib.base64_encode(bytes.get_data())
-            );
-            multipart.append_form_string('apikey', SETTING_OCR_API);
-            multipart.append_form_string('OCREngine', '2');
-
-            const message = Soup.form_request_new_from_multipart(
-              OCR_URL,
-              multipart
-            );
-
-            this._session.queue_message(
-              message,
-              function (result, task) {
-                const status = message.status_code;
-                if (status == Soup.Status.CANCELLED) {
-                  return;
-                }
-                if (status !== Soup.Status.OK) {
-                  lg(
-                    '[UIImageRenderer::_processOCRCapture]',
-                    'Error occurred during OCR processing:',
-                    status,
-                    message.response_body.length,
-                    Soup.Status.get_phrase(message.status_code)
-                  );
-                  this._ocrResultAvailable = false;
-                  if (
-                    status >= Soup.Status.CANT_RESOLVE &&
-                    status <= Soup.Status.CANT_CONNECT_PROXY
-                  ) {
-                    this._ocrText.error(
-                      'Unable to connect.\n' +
-                        'Check your internet connection\n' +
-                        'and try again.'
-                    );
-                  } else if (status === Soup.Status.FORBIDDEN) {
-                    this._ocrText.error(
-                      'Your API KEY is invalid.\n' +
-                        'Visit https://ocr-space.com\n' +
-                        'to renew your KEY'
-                    );
-                  } else {
-                    this._ocrText.error(
-                      Soup.Status.get_phrase(message.status_code)
-                    );
-                  }
-
-                  return;
-                }
-
-                const data = message.response_body.data;
-                const obj = JSON.parse(
-                  message.response_body.length === 0 ? '{}' : data
-                );
-                const extract =
-                  obj?.ParsedResults?.[0]?.ParsedText?.trim() ?? '';
-                lg(
-                  '[UIImageRenderer::_processOCRCapture]',
-                  'data:',
-                  data,
-                  'extract:',
-                  extract,
-                  'length:',
-                  extract?.length ?? 0
-                );
-                if (extract !== null && extract.length !== 0) {
-                  this._ocrText.open(extract);
-                } else {
-                  this._ocrText.error('Unable to extract information');
-                }
-                this._ocrResultAvailable = true;
-              }.bind(this)
-            );
-          }.bind(this)
-        );
+        this._doOCR(pixbuf);
       } else {
         this._ocrIndicator.set_size(0, 0);
       }
+    }
+
+    _doOCR(pixbuf) {
+      if (this._ocrCancellable) {
+        this._ocrCancellable.cancel();
+        this._ocrCancellable = null;
+        this._ocrResultAvailable = false;
+      }
+
+      this._ocrText.open('Loading...', true /* instantly */);
+
+      this._session = new Soup.Session({ ssl_strict: false });
+      const stream = Gio.MemoryOutputStream.new_resizable();
+
+      this._ocrCancellable = new Gio.Cancellable();
+      pixbuf.save_to_streamv_async(
+        stream,
+        'png',
+        [],
+        [],
+        this._ocrCancellable,
+        function (pixbuf, task) {
+          if (this._ocrCancellable.is_cancelled()) {
+            return;
+          }
+          if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
+            return;
+          }
+          stream.close(null);
+
+          const bytes = stream.steal_as_bytes();
+          const multipart = new Soup.Multipart(Soup.FORM_MIME_TYPE_MULTIPART);
+          multipart.append_form_string(
+            'base64Image',
+            'data:image/png;base64,' + GLib.base64_encode(bytes.get_data())
+          );
+          multipart.append_form_string('apikey', SETTING_OCR_API);
+          multipart.append_form_string('OCREngine', '2');
+
+          const message = Soup.form_request_new_from_multipart(
+            OCR_URL,
+            multipart
+          );
+
+          this._session.queue_message(
+            message,
+            function (result, task) {
+              const status = message.status_code;
+              if (status == Soup.Status.CANCELLED) {
+                return;
+              }
+              if (status !== Soup.Status.OK) {
+                lg(
+                  '[UIImageRenderer::_processOCRCapture]',
+                  'Error occurred during OCR processing:',
+                  status,
+                  message.response_body.length,
+                  Soup.Status.get_phrase(message.status_code)
+                );
+                this._ocrResultAvailable = false;
+                if (
+                  status >= Soup.Status.CANT_RESOLVE &&
+                  status <= Soup.Status.CANT_CONNECT_PROXY
+                ) {
+                  this._ocrText.error(
+                    'Unable to connect.\n' +
+                      'Check your internet connection\n' +
+                      'and try again.'
+                  );
+                } else if (status === Soup.Status.FORBIDDEN) {
+                  this._ocrText.error(
+                    'Your API KEY is invalid.\n' +
+                      'Visit https://ocr-space.com\n' +
+                      'to renew your KEY'
+                  );
+                } else {
+                  this._ocrText.error(
+                    Soup.Status.get_phrase(message.status_code)
+                  );
+                }
+
+                return;
+              }
+
+              const data = message.response_body.data;
+              const obj = JSON.parse(
+                message.response_body.length === 0 ? '{}' : data
+              );
+              const extract = obj?.ParsedResults?.[0]?.ParsedText?.trim() ?? '';
+              lg(
+                '[UIImageRenderer::_processOCRCapture]',
+                'data:',
+                data,
+                'extract:',
+                extract,
+                'length:',
+                extract?.length ?? 0
+              );
+              if (extract !== null && extract.length !== 0) {
+                this._ocrText.open(extract);
+              } else {
+                this._ocrText.error('Unable to extract information');
+              }
+              this._ocrResultAvailable = true;
+            }.bind(this)
+          );
+        }.bind(this)
+      );
     }
 
     _abortOCRSession() {
@@ -1930,7 +1955,7 @@ const OcrTip = GObject.registerClass(
     open(message, instantly = false) {
       this.remove_style_class_name('pixzzle-ui-ocrtip-error');
       if (this._timeoutId) {
-        this.close();
+        this.close(true /* instantly */);
       }
 
       this._open(
@@ -1960,11 +1985,12 @@ const OcrTip = GObject.registerClass(
 
       this._timeoutId = GLib.timeout_add(
         GLib.PRIORITY_DEFAULT,
-        300,
+        150,
         function () {
+          lg('[OcrTip::_open::timeout_add()]', this._openCancelled);
           if (this._openCancelled) {
             this._openCancelled = false;
-            this.close();
+            this.close(true /* instantly */);
           } else {
             this.set_opacity(0);
             this.show();
@@ -1982,16 +2008,20 @@ const OcrTip = GObject.registerClass(
       GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] ocrtip._open');
     }
 
-    close() {
+    close(instantly = false) {
       if (this._timeoutId) {
         GLib.source_remove(this._timeoutId);
         this._timeoutId = null;
-        return;
       }
 
       if (!this.visible) return;
 
       this.remove_all_transitions();
+      if (instantly) {
+        this.hide();
+        return;
+      }
+
       this.ease({
         opacity: 0,
         duration: 100,
@@ -2003,11 +2033,12 @@ const OcrTip = GObject.registerClass(
     error(message) {
       lg('[OcrTip::error]', 'error:', message, this._timeoutId);
       if (this._timeoutId) {
-        this.close();
+        this.close(true /* instantly */);
       }
 
       this._open(
         function () {
+          lg('[OcrTip::error::_open::()]');
           const style_classes = this.get_style_class_name()?.split(' ') ?? [];
           const rem_style_classes = style_classes.filter(
             (style_class) => style_class !== 'pixzzle-ui-ocrtip-error'
@@ -2073,6 +2104,18 @@ const OcrTip = GObject.registerClass(
       return Clutter.EVENT_STOP;
     }
 
+    vfunc_allocate(box) {
+      const [width, height] = [box.get_width(), box.get_height()];
+      box.set_size(clamp(width, 300), clamp(height, 200));
+      this.set_allocation(box);
+
+      super.vfunc_allocate(box);
+
+      function clamp(value, max) {
+        return value > max ? max : value;
+      }
+    }
+
     vfunc_button_press_event(event) {
       const button = event.button;
       if (
@@ -2102,7 +2145,7 @@ const OcrTip = GObject.registerClass(
 const UIThumbnailViewer = GObject.registerClass(
   {
     GTypeName: 'UIThumbnailViewer',
-    Signals: { replace: { param_types: [GObject.TYPE_STRING] } }
+    Signals: { replace: { param_types: [Object.prototype] } }
   },
   class UIThumbnailViewer extends St.BoxLayout {
     _init(params) {
@@ -2133,7 +2176,7 @@ const UIThumbnailViewer = GObject.registerClass(
         if (!this._initialized) {
           this._loadShots()
             .then((allShots) => {
-              this.emit('replace', allShots[0] ?? null);
+              this.emit('replace', { name: allShots[0] ?? null });
               this.disconnect(this._connector);
             })
             .catch((err) => logError(err, 'Unable to load previous state'));
@@ -2147,12 +2190,12 @@ const UIThumbnailViewer = GObject.registerClass(
       const shot = new UIPreview(newShot, this.width);
       shot.connect('activate', (widget) => {
         lg('UIThumbnailViewer::_addShot::shot::activate]', widget);
-        this.emit('replace', widget._filename);
+        this.emit('replace', { name: widget._filename });
       });
       shot.connect('delete', (widget) => {
         this._removeShot(widget).then((filename) => {
           const nextShot = this._viewBox.get_child_at_index(0);
-          this.emit('replace', nextShot?._filename ?? null);
+          this.emit('replace', { name: nextShot?._filename ?? null });
           GLib.unlink(filename);
         });
       });
@@ -2164,7 +2207,7 @@ const UIThumbnailViewer = GObject.registerClass(
     }
 
     _addNewShot(newShot) {
-      this._addShot(newShot, true /* prepend */);
+      this._addShot(newShot.name, true /* prepend */);
       this.emit('replace', newShot);
     }
 
