@@ -319,6 +319,10 @@ var UIMainViewer = GObject.registerClass(
         this._emptyView = true;
       });
       this._imageViewer.connect('enter-event', this._stopDrag.bind(this));
+      this._imageViewer.connect('switch-active', (widget, detail) => {
+        lg('[UIMainViewer::_init::_imageViewer::switch-active]');
+        this._thumbnailView._switchActive(detail);
+      });
       this._bigViewContainer.add_child(this._imageViewer);
 
       this._snapIndicator = new St.Widget({
@@ -1191,6 +1195,7 @@ var UIMainViewer = GObject.registerClass(
 );
 
 const ViewOrientation = Object.freeze({ TOP: 0, RIGHT: 1, BOTTOM: 2, LEFT: 3 });
+const Directivity = Object.freeze({ NEXT: 1, PREV: -1 });
 const N_AXIS = 4;
 
 const UIImageRenderer = GObject.registerClass(
@@ -1198,7 +1203,8 @@ const UIImageRenderer = GObject.registerClass(
     Signals: {
       'lock-axis': { param_types: [Object.prototype] },
       'clean-slate': {},
-      'ocr-cancelled': {}
+      'ocr-cancelled': {},
+      'switch-active': { param_types: [Object.prototype] }
     }
   },
   class UIImageRenderer extends St.Widget {
@@ -1303,6 +1309,7 @@ const UIImageRenderer = GObject.registerClass(
 
     _replace(shot) {
       const newFile = shot.name;
+      this._shotWidget = shot.widget;
       this._ocrScanOnEntry = shot.ocr;
       lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
       if (newFile === null) {
@@ -1744,6 +1751,21 @@ const UIImageRenderer = GObject.registerClass(
       if (symbol === Clutter.KEY_Escape) {
         this._abortOCRSession();
         return Clutter.EVENT_STOP;
+      } else if (symbol === Clutter.KEY_Delete) {
+        this._shotWidget?.emit('delete');
+        return Clutter.EVENT_STOP;
+      } else if (symbol === Clutter.KEY_Left) {
+        this.emit('switch-active', {
+          current: this._filename,
+          direction: Directivity.PREV
+        });
+        return Clutter.EVENT_STOP;
+      } else if (symbol === Clutter.KEY_Right) {
+        this.emit('switch-active', {
+          current: this._filename,
+          direction: Directivity.NEXT
+        });
+        return Clutter.EVENT_STOP;
       } else if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
         if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
           this._pixbuf = this._pixbuf.rotate_simple(
@@ -2176,7 +2198,7 @@ const UIThumbnailViewer = GObject.registerClass(
         if (!this._initialized) {
           this._loadShots()
             .then((allShots) => {
-              this.emit('replace', { name: allShots[0] ?? null });
+              this.emit('replace', allShots[0] ?? {});
               this.disconnect(this._connector);
             })
             .catch((err) => logError(err, 'Unable to load previous state'));
@@ -2190,12 +2212,15 @@ const UIThumbnailViewer = GObject.registerClass(
       const shot = new UIPreview(newShot, this.width);
       shot.connect('activate', (widget) => {
         lg('UIThumbnailViewer::_addShot::shot::activate]', widget);
-        this.emit('replace', { name: widget._filename });
+        this.emit('replace', { name: widget._filename, widget: widget });
       });
       shot.connect('delete', (widget) => {
         this._removeShot(widget).then((filename) => {
           const nextShot = this._viewBox.get_child_at_index(0);
-          this.emit('replace', { name: nextShot?._filename ?? null });
+          this.emit('replace', {
+            name: nextShot?._filename ?? null,
+            widget: widget
+          });
           GLib.unlink(filename);
         });
       });
@@ -2204,11 +2229,36 @@ const UIThumbnailViewer = GObject.registerClass(
       } else {
         this._viewBox.add_child(shot);
       }
+
+      return { name: shot._filename, widget: shot };
     }
 
     _addNewShot(newShot) {
-      this._addShot(newShot.name, true /* prepend */);
-      this.emit('replace', newShot);
+      const shot = this._addShot(newShot.name, true /* prepend */);
+      this.emit('replace', { ...newShot, ...shot });
+    }
+
+    _switchActive(detail) {
+      const { current: filename, direction } = detail;
+      if (filename === null) {
+        return;
+      }
+
+      const shots = this._viewBox.get_children();
+      let next = -1;
+      for (let i = 0; i < shots.length; ++i) {
+        const shot = shots[i];
+        if (filename === shot._filename) {
+          next = i + direction;
+          next = (next < 0 ? next + shots.length : next) % shots.length;
+          break;
+        }
+      }
+      if (next === -1) {
+        return;
+      }
+
+      shots[next].emit('activate');
     }
 
     _shotCount() {
@@ -2237,11 +2287,12 @@ const UIThumbnailViewer = GObject.registerClass(
       }
 
       const allShots = await this._processShots(snapshotDir);
+      const shots = [];
       for (const shot of allShots) {
-        this._addShot(shot);
+        shots.push(this._addShot(shot));
       }
 
-      return allShots;
+      return shots;
     }
 
     _processShots(directory) {
