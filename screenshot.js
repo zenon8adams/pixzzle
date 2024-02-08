@@ -44,6 +44,7 @@ const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
 const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation } = Me.imports.utils;
+const { UITooltip } = Me.imports.tooltip;
 
 const IconLabelButton = GObject.registerClass(
   class IconLabelButton extends St.Button {
@@ -60,74 +61,6 @@ const IconLabelButton = GObject.registerClass(
       this._container.add_child(
         new St.Label({ text: label, x_align: Clutter.ActorAlign.CENTER })
       );
-    }
-  }
-);
-
-const Tooltip = GObject.registerClass(
-  class Tooltip extends St.Label {
-    _init(widget, params) {
-      super._init(params);
-
-      this._widget = widget;
-      this._timeoutId = null;
-
-      this._widget.connect('notify::hover', () => {
-        if (this._widget.hover) this.open();
-        else this.close();
-      });
-    }
-
-    open() {
-      if (this._timeoutId) return;
-
-      this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-        this.opacity = 0;
-        this.show();
-
-        const extents = this._widget.get_transformed_extents();
-
-        const xOffset = Math.floor((extents.get_width() - this.width) / 2);
-        const x = Math.clamp(
-          extents.get_x() + xOffset,
-          0,
-          global.stage.width - this.width
-        );
-
-        const node = this.get_theme_node();
-        const yOffset = node.get_length('-y-offset');
-
-        const y = extents.get_y() - this.height - yOffset;
-
-        this.set_position(x, y);
-        this.ease({
-          opacity: 255,
-          duration: 150,
-          mode: Clutter.AnimationMode.EASE_OUT_QUAD
-        });
-
-        this._timeoutId = null;
-        return GLib.SOURCE_REMOVE;
-      });
-      GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] tooltip.open');
-    }
-
-    close() {
-      if (this._timeoutId) {
-        GLib.source_remove(this._timeoutId);
-        this._timeoutId = null;
-        return;
-      }
-
-      if (!this.visible) return;
-
-      this.remove_all_transitions();
-      this.ease({
-        opacity: 0,
-        duration: 100,
-        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        onComplete: () => this.hide()
-      });
     }
   }
 );
@@ -1127,7 +1060,7 @@ var UIShutter = GObject.registerClass(
       this._typeButtonContainer.add_child(this._selectionButton);
 
       this.add_child(
-        new Tooltip(this._selectionButton, {
+        new UITooltip(this._selectionButton, {
           text: _('Area Selection'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
@@ -1150,7 +1083,7 @@ var UIShutter = GObject.registerClass(
       this._typeButtonContainer.add_child(this._screenButton);
 
       this.add_child(
-        new Tooltip(this._screenButton, {
+        new UITooltip(this._screenButton, {
           text: _('Screen Selection'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
@@ -1169,7 +1102,7 @@ var UIShutter = GObject.registerClass(
         new St.Widget({ style_class: 'pixzzle-ui-capture-button-circle' })
       );
       this.add_child(
-        new Tooltip(this._captureButton, {
+        new UITooltip(this._captureButton, {
           /* Translators: since this string refers to an action,
     it needs to be phrased as a verb. */
           text: _('Capture'),
@@ -1201,7 +1134,7 @@ var UIShutter = GObject.registerClass(
       this._showPointerButtonContainer.add_child(this._ocrActionButton);
 
       this.add_child(
-        new Tooltip(this._ocrActionButton, {
+        new UITooltip(this._ocrActionButton, {
           text: _('Perform OCR'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false

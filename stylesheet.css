@@ -196,24 +196,48 @@
 }
 
 .pixzzle-ui-base-container,
-#UIThumbnailViewer {
+#UIThumbnailViewer,
+#UIFolderViewer {
   background-color: rgba(0, 0, 0, 0.2);
   border-radius: 10px;
 }
 
-#UIThumbnailViewer {
+#UIThumbnailViewer,
+#UIFolderViewer {
   width: 10em;
   max-width: 10em;
 }
 
 .pixzzle-ui-screenshot-button {
-  padding: 8px 20px;
-  border-radius: 6px;
+  padding: 8px 8px 8px 8px;
+  border-radius: 6px 0 0 6px;
   color: #fff;
   background-color: #507ab9;
+  spacing: 0.5em;
 }
+
+.pixzzle-ui-screenshot-button StIcon {
+  icon-size: 1em;
+}
+
 .pixzzle-ui-screenshot-button:hover {
   background-color: #5280c4;
+}
+
+#UIThumbnailControls {
+  spacing: 0.2em;
+}
+
+.pixzzle-ui-swap-button {
+  padding: 8px 8px 8px 8px;
+  border-radius: 0 6px 6px 0;
+  color: #fff;
+  background-color: #507ab9;
+  spacing: 0.5em;
+}
+
+.pixzzle-ui-swap-button StIcon {
+  icon-size: 1em;
 }
 
 .pixzzle-ui-thumbnail-scrollview {
@@ -271,4 +295,15 @@
   padding: 6px 12px;
   outline: none;
   border: none;
+}
+
+.pixzzle-ui-folder {
+  color: white;
+}
+
+.pixzzle-ui-folder-label {
+  text-align: center;
+  font-size: 1.4em;
+  font-weight: 800;
+  padding: 0 10px 0 10px;
 }

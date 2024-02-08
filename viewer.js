@@ -56,7 +56,9 @@ const {
   SCHEMA_NAME,
   lg,
   getShotsLocation,
-  getThumbnailsLocation
+  getThumbnailsLocation,
+  getDate,
+  fmt
 } = Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
 const { computePanelPosition } = Me.imports.panel;
@@ -64,6 +66,7 @@ const Panel = computePanelPosition();
 const Prefs = Me.imports.prefs;
 const { getActionWatcher } = Me.imports.watcher;
 const { Timer } = Me.imports.timer;
+const { UITooltip } = Me.imports.tooltip;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
@@ -200,6 +203,13 @@ var UIMainViewer = GObject.registerClass(
       });
       this._topMostContainer.add_child(this._splitViewXContainer);
 
+      this._swapViewContainer = new UILayout({
+        name: 'UISwapViewContainer',
+        vertical: true,
+        x_expand: false,
+        reactive: true
+      });
+
       this._bigViewContainer = new UILayout({
         name: 'UIBigViewLayout',
         x_expand: true,
@@ -218,7 +228,6 @@ var UIMainViewer = GObject.registerClass(
 
       this._settingsButton = new UIButton({
         style_class: 'pixzzle-ui-settings-button',
-        label: 'settings',
         child: new St.Icon({ icon_name: 'org.gnome.Settings-symbolic' }),
         x_expand: false,
         reactive: true,
@@ -235,31 +244,117 @@ var UIMainViewer = GObject.registerClass(
       });
       this._settingsButton.connect('enter-event', this._stopDrag.bind(this));
 
+      this._settingsButtonTooltip = new UITooltip(this._settingsButton, {
+        text: _('Open settings'),
+        style_class: 'pixzzle-ui-tooltip',
+        visible: false
+      });
+      this.connect('destroy', () => {
+        Main.uiGroup.remove_actor(this._settingsButtonTooltip);
+        this._settingsButtonTooltip.destroy();
+      });
+      Main.uiGroup.add_child(this._settingsButtonTooltip);
+
+      this._thumbnailControls = new UILayout({
+        name: 'UIThumbnailControls',
+        x_align: Clutter.ActorAlign.END,
+        x_expand: true
+      });
       this._screenshotButton = new UIButton({
-        style_class: 'pixzzle-ui-screenshot-button',
         label: _('Add New'),
         x_expand: false,
         x_align: Clutter.ActorAlign.END,
-        reactive: true
+        reactive: true,
+        style_class: 'pixzzle-ui-screenshot-button'
       });
-      this._buttonBox.add_child(this._screenshotButton);
+      const iconName = 'pixzzle-ui-swap-symbolic.svg';
+      this._swapIcon = new St.Icon({
+        gicon: Gio.icon_new_for_string(`${Me.path}/icons/${iconName}`),
+        rotation_angle_z: 0
+      });
+      this._swapButton = new UIButton({
+        style_class: 'pixzzle-ui-swap-button',
+        child: this._swapIcon,
+        x_expand: false,
+        reactive: true,
+        x_align: Clutter.ActorAlign.CENTER,
+        toggle_mode: true
+      });
+      this._swapIcon.set_pivot_point(0.5, 0.5);
+      this._swapButton.connect('notify::checked', (widget) => {
+        const correction = this._heightDiff ? this._heightDiff : 0;
+        const extent = this._swapViewContainer.height - correction;
+        lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
+        this._animateSwap();
+        // folder hidden
+        if (widget.checked) {
+          this._crossSlideAnimate(
+            this._folderView,
+            this._thumbnailView,
+            extent,
+            correction
+          );
+        } else {
+          this._crossSlideAnimate(
+            this._thumbnailView,
+            this._folderView,
+            extent,
+            correction
+          );
+        }
+      });
+
+      this._swapButtonTooltip = new UITooltip(this._swapButton, {
+        text: _('Toggle SideView'),
+        style_class: 'pixzzle-ui-tooltip',
+        visible: false
+      });
+      this.connect('destroy', () => {
+        Main.uiGroup.remove_actor(this._swapButtonTooltip);
+        this._swapButtonTooltip.destroy();
+      });
+
+      Main.uiGroup.add_child(this._swapButtonTooltip);
+      this._buttonBox.add_child(this._thumbnailControls);
+      this._thumbnailControls.add_child(this._screenshotButton);
+      this._thumbnailControls.add_child(this._swapButton);
       this._screenshotButton.connect('clicked', () =>
         this._showScreenshotView()
       );
       this._screenshotButton.connect('enter-event', this._stopDrag.bind(this));
 
-      this._thumbnailView = new UIThumbnailViewer({
+      this._folderView = new UIFolderViewer({
+        name: 'UIFolderViewer',
+        x_expand: false,
+        visible: false,
+        height: 0
+      });
+      this._folderView.connect('swap-view', (widget, payload) => {
+        this._thumbnailView.reload(
+          payload,
+          () => (this._swapButton.checked = false)
+        );
+      });
+      this._folderView.connect('enter-event', this._stopDrag.bind(this));
+
+      this._thumbnailView = new UIThumbnailViewer(this._folderView, {
         name: 'UIThumbnailViewer',
-        x_expand: false
+        x_expand: false,
+        visible: true
       });
       this._thumbnailView.connect('replace', (_, shot) => {
         this._imageViewer._replace(shot);
         this._emptyView = this._thumbnailView._shotCount() == 0;
+        if (this._emptyView) {
+          this._swapButton.checked = true;
+        }
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
 
       this._splitViewXContainer.add_child(this._bigViewContainer);
-      this._splitViewXContainer.add_child(this._thumbnailView);
+      this._splitViewXContainer.add_child(this._swapViewContainer);
+      this._swapViewContainer.add_child(this._thumbnailView);
+      this._swapViewContainer.add_child(this._folderView);
 
       this._imageViewer = new UIImageRenderer(this);
       this._imageViewer.connect('lock-axis', (_, axis) => {
@@ -441,7 +536,7 @@ var UIMainViewer = GObject.registerClass(
         this._shutterNewShotHandler = this._shutter.connect(
           'new-shot',
           (_, shot) => {
-            this._thumbnailView._addNewShot(shot);
+            this._folderView.addNewShot(shot).catch(logError);
           }
         );
       }
@@ -454,6 +549,52 @@ var UIMainViewer = GObject.registerClass(
         onComplete: () => {
           this._shutter._showUI();
         }
+      });
+    }
+
+    _crossSlideAnimate(one, other, extent, correction) {
+      /*
+       * Changing the height of an actor also
+       * changes its minimum height. If we intend
+       * to have a smooth crossFade animation,
+       * we have to adjust the minimum height of the
+       * actor and also synchronize their height
+       * adjustment.
+       * @param correction adjusts the height of
+       * the enlarged actor if its parent container
+       * has shrinked than the size it is currently
+       * at.
+       */
+      one.visible = true;
+      one.height = 0;
+      one.ease({
+        height: extent,
+        duration: 300,
+        mode: Clutter.AnimationMode.EASE_IN_OUT,
+        onComplete: () => {
+          one.min_height = 0;
+        }
+      });
+      other.height -= correction;
+      other.ease({
+        height: 0,
+        duration: 300,
+        mode: Clutter.AnimationMode.EASE_IN_OUT,
+        onComplete: () => {
+          other.visible = false;
+          other.min_height = 0;
+        }
+      });
+    }
+
+    _animateSwap() {
+      const ROTATION_ANGLE = -90;
+      const extent =
+        this._swapIcon.rotation_angle_z === ROTATION_ANGLE ? 0 : ROTATION_ANGLE;
+      this._swapIcon.ease({
+        rotation_angle_z: extent,
+        duration: 200,
+        mode: Clutter.AnimationMode.LINEAR
       });
     }
 
@@ -695,7 +836,7 @@ var UIMainViewer = GObject.registerClass(
           this.opacity = 0;
           this.show();
           this.ease({
-            opacity: 255,
+            opacity: FULLY_OPAQUE,
             duration: 150,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD
           });
@@ -793,8 +934,12 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _updateSize() {
+      this._heightDiff = this.height;
+
       const [x, y, w, h] = this._getGeometry();
       this._setRect(x, y, w, h);
+
+      this._heightDiff -= this.height;
     }
 
     _setRect(x, y, w, h) {
@@ -1129,6 +1274,17 @@ var UIMainViewer = GObject.registerClass(
     vfunc_key_press_event(event) {
       const symbol = event.keyval;
       lg('[UIMainViewer::vfunc_key_press_event]', 'symbol:', symbol);
+      if (symbol === Clutter.KEY_Down) {
+        if (this._swapButton.checked) {
+          this._swapButton.checked = false;
+        }
+        return Clutter.EVENT_STOP;
+      } else if (symbol === Clutter.KEY_Up) {
+        if (!this._swapButton.checked) {
+          this._swapButton.checked = true;
+        }
+        return Clutter.EVENT_STOP;
+      }
       this._imageViewer._onKeyPress(event);
 
       return super.vfunc_key_press_event(event);
@@ -1286,7 +1442,7 @@ const UIImageRenderer = GObject.registerClass(
       });
       this.add_child(this._ocrIndicator);
 
-      this._ocrText = new OcrTip(this._ocrIndicator, this, {
+      this._ocrText = new UIOcrTip(this._ocrIndicator, this, {
         style_class: 'pixzzle-ui-ocrtip',
         x_align: St.Align.START,
         visible: false,
@@ -1955,8 +2111,8 @@ const UIImageRenderer = GObject.registerClass(
   }
 );
 
-const OcrTip = GObject.registerClass(
-  class OcrTip extends St.Label {
+const UIOcrTip = GObject.registerClass(
+  class UIOcrTip extends St.Label {
     _init(widget, container, params) {
       super._init(params);
 
@@ -1997,7 +2153,7 @@ const OcrTip = GObject.registerClass(
         this.set_opacity(0);
         action();
         this.ease({
-          opacity: 255,
+          opacity: FULLY_OPAQUE,
           duration: 150,
           mode: Clutter.AnimationMode.EASE_OUT_QUAD
         });
@@ -2018,7 +2174,7 @@ const OcrTip = GObject.registerClass(
             this.show();
             action();
             this.ease({
-              opacity: 255,
+              opacity: FULLY_OPAQUE,
               duration: 150,
               mode: Clutter.AnimationMode.EASE_OUT_QUAD
             });
@@ -2164,12 +2320,8 @@ const OcrTip = GObject.registerClass(
   }
 );
 
-const UIThumbnailViewer = GObject.registerClass(
-  {
-    GTypeName: 'UIThumbnailViewer',
-    Signals: { replace: { param_types: [Object.prototype] } }
-  },
-  class UIThumbnailViewer extends St.BoxLayout {
+const UISideViewBase = GObject.registerClass(
+  class UISideViewBase extends St.BoxLayout {
     _init(params) {
       super._init({ ...params, y_expand: true });
 
@@ -2192,20 +2344,43 @@ const UIThumbnailViewer = GObject.registerClass(
         y_align: Clutter.ActorAlign.START
       });
       this._scrollView.add_actor(this._viewBox);
+    }
+  }
+);
+
+const UIThumbnailViewer = GObject.registerClass(
+  {
+    GTypeName: 'UIThumbnailViewer',
+    Signals: { replace: { param_types: [Object.prototype] } }
+  },
+  class UIThumbnailViewer extends UISideViewBase {
+    _init(sibling, params) {
+      super._init(params);
+
+      this._sibling = sibling;
 
       this._connector = this.connect('notify::mapped', () => {
         lg('[UIThumbnailViewer::_init::notify::mapped]');
-        if (!this._initialized) {
-          this._loadShots()
-            .then((allShots) => {
-              this.emit('replace', allShots[0] ?? {});
-              this.disconnect(this._connector);
-            })
-            .catch((err) => logError(err, 'Unable to load previous state'));
-        } else {
-          this._initialized = true;
-        }
+        this._initialize(null, () => this.disconnect(this._connector));
       });
+    }
+
+    _initialize(payload, onComplete) {
+      if (!this._initialized) {
+        this._loadShots(payload)
+          .then((allShots) => {
+            this.emit('replace', allShots[0] ?? {});
+            onComplete?.();
+          })
+          .catch((err) => logError(err, 'Unable to load previous state'));
+      } else {
+        this._initialized = true;
+      }
+    }
+
+    reload(shots, cb) {
+      this._initialized = false;
+      this._initialize(shots, cb);
     }
 
     _addShot(newShot, prepend) {
@@ -2221,7 +2396,19 @@ const UIThumbnailViewer = GObject.registerClass(
             name: nextShot?._filename ?? null,
             widget: widget
           });
+          const name = GLib.path_get_basename(filename);
+          const thumbnail = GLib.build_filenamev([
+            getThumbnailsLocation().get_path(),
+            name
+          ]);
+          lg(
+            '[UIThumbnailViewer::_addShot::shot::delete]',
+            thumbnail,
+            filename
+          );
           GLib.unlink(filename);
+          GLib.unlink(thumbnail);
+          this._sibling.removeShot(this._date, this._currentFolder, filename);
         });
       });
       if (prepend) {
@@ -2280,77 +2467,21 @@ const UIThumbnailViewer = GObject.registerClass(
       });
     }
 
-    async _loadShots() {
-      let snapshotDir = getShotsLocation();
-      if (!snapshotDir.query_exists(null)) {
-        return;
-      }
-
-      const allShots = await this._processShots(snapshotDir);
+    async _loadShots(payload) {
+      this._viewBox.destroy_all_children();
+      const bundle = payload ?? (await this._sibling.latestShot());
+      this._date = bundle.date;
+      this._currentFolder = bundle.widget;
       const shots = [];
-      for (const shot of allShots) {
+      for (const shot of bundle.shots) {
         shots.push(this._addShot(shot));
+      }
+      const newShotProps = bundle.nid;
+      if (newShotProps) {
+        this.emit('replace', { ...newShotProps, ...shots[0] });
       }
 
       return shots;
-    }
-
-    _processShots(directory) {
-      const DEFAULT_ATTRIBUTES = 'standard::*';
-      return new Promise((resolve, reject) => {
-        if (this._entriesEnumerateCancellable) {
-          this._entriesEnumerateCancellable.cancel();
-        }
-        this._entriesEnumerateCancellable = new Gio.Cancellable();
-        directory.enumerate_children_async(
-          DEFAULT_ATTRIBUTES,
-          Gio.FileQueryInfoFlags.NONE,
-          GLib.PRIORITY_DEFAULT,
-          this._entriesEnumerateCancellable,
-          (source, result) => {
-            this._entriesEnumerateCancellable = null;
-            const files = [];
-            try {
-              let fileEnum = source.enumerate_children_finish(result);
-              let info;
-              while ((info = fileEnum.next_file(null))) {
-                const filename = GLib.build_filenamev([
-                  directory.get_path(),
-                  info.get_name()
-                ]);
-                if (!GLib.file_test(filename, GLib.FileTest.IS_DIR)) {
-                  files.push(filename);
-                }
-              }
-            } catch (e) {
-              if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                resolve([]);
-              } else {
-                reject('file-read-error');
-              }
-              return;
-            }
-            files.sort(filesDateSorter);
-            resolve(files);
-            return;
-          }
-        );
-      });
-
-      function filesDateSorter(one, other) {
-        const oneDate = getDate(one);
-        const otherDate = getDate(other);
-        return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
-      }
-
-      function getDate(fullname) {
-        const name = GLib.path_get_basename(fullname);
-        const uuid = GLib.uuid_string_random().length + 1;
-        const effective = name.slice(uuid, name.indexOf('.'));
-        const parts = effective.match(/(\d+-\d+-\d+)-(\d+-\d+-\d+)/);
-        const [date, time] = [parts[1], parts[2].replaceAll('-', ':')];
-        return Date.parse(date + ' ' + time);
-      }
     }
   }
 );
@@ -2394,7 +2525,7 @@ const UIPreview = GObject.registerClass(
          */
         this._surface.add_effect(
           new Shell.BlurEffect({
-            brightness: 255,
+            brightness: FULLY_OPAQUE,
             mode: Shell.BlurMode.ACTOR,
             sigma: 2.5
           })
@@ -2415,9 +2546,7 @@ const UIPreview = GObject.registerClass(
       this._surface.set_content(this._image);
       this._surface.set_size(span, span);
 
-      this._trigger = new St.Button({
-        style_class: 'pixzzle-ui-thumbnail-trigger'
-      });
+      this._trigger = new St.Button();
       this.add_child(this._trigger);
 
       this._trigger.add_constraint(
@@ -2491,6 +2620,285 @@ const UIPreview = GObject.registerClass(
   }
 );
 
+const UIFolderViewer = GObject.registerClass(
+  {
+    GTypeName: 'UIFolderViewer',
+    Signals: {
+      replace: { param_types: [Object.prototype] },
+      'swap-view': { param_types: [Object.prototype] }
+    }
+  },
+  class UIFolderViewer extends UISideViewBase {
+    _init(params) {
+      super._init(params);
+    }
+
+    _addShot(name, shots, gradient, extras = {}, prepend = false) {
+      const folder = new UIFolder(name, shots, gradient, {
+        style_class: 'pixzzle-ui-folder'
+      });
+      folder.connect('activate', (widget, params) => {
+        /* If `params` is empty, the `shots` array doesn't contain
+         * a new screenshot. Don't send `extras` which may contain
+         * stale shots data. We do this because of properties such
+         * as `nid` used in tagging of new shots. This property
+         * is used in determining if for example ocr should be
+         * performed once the shot is staged. If `extras` is not
+         * cleared, ocr action will be repeatedly performed once
+         * the shot with the `ocr` property is staged.
+         */
+        const override =
+          Object.keys(params).length == 0 ? {} : { ...extras, ...params };
+        this.emit('swap-view', {
+          shots: widget._shots,
+          date: name,
+          widget: folder,
+          ...override
+        });
+        lg('[UIFolderViewer::_addShot::folder::activate]', widget._shots);
+      });
+      /*
+      shot.connect('delete', (widget) => {
+        this._removeShot(widget).then((filename) => {
+          const nextShot = this._viewBox.get_child_at_index(0);
+          this.emit('replace', {
+            name: nextShot?._filename ?? null,
+            widget: widget
+          });
+          GLib.unlink(filename);
+        });
+      }); */
+      if (prepend) {
+        this._viewBox.insert_child_at_index(folder, 0);
+      } else {
+        this._viewBox.add_child(folder);
+      }
+
+      folder.set_size(this.width, this.width);
+
+      return folder;
+    }
+
+    async latestShot() {
+      if (!this._shotGroups) {
+        await this._loadShots();
+      }
+
+      const today = fmt(Date.now());
+      if (this._shotGroups[today]) {
+        return { shots: this._shotGroups[today], date: today };
+      }
+
+      const date = this._shotsDate[0];
+      if (this._shotGroups[date]) {
+        return { shots: this._shotGroups[date], date };
+      }
+      return { shots: [], date: null };
+    }
+
+    async addNewShot(newShot) {
+      if (!this._shotGroups) {
+        await this._loadShots();
+      }
+
+      /*
+       * The `nid` property sent via the `activate`
+       * signal helps distinguish new screenshots
+       * with metadata attached from stale shots.
+       */
+      const today = fmt(Date.now());
+      if (!this._shotGroups[today]) {
+        this._shotGroups[today] = [newShot.name];
+        const folder = this._addShot(
+          today,
+          this._shotGroups[today],
+          this._gradients[Math.floor(Math.random() * this._gradients.length)],
+          { nid: newShot },
+          true /* prepend */
+        );
+        folder.emit('activate', {});
+      } else {
+        // Insert new shots name at the front to maintain
+        // sort ordering.
+        this._shotGroups[today].unshift(newShot.name);
+        const folder = this._viewBox.get_child_at_index(0);
+        folder.emit('activate', { nid: newShot });
+      }
+    }
+
+    removeShot(date, folder, shot) {
+      lg('[UIFolderViewer::removeShot]', 'date:', date, 'shot:', shot);
+      const index = this._shotGroups[date].findIndex((name) => name === shot);
+      this._shotGroups[date].splice(index, 1);
+      if (this._shotGroups[date].length === 0) {
+        delete this._shotGroups[date];
+      }
+      if (this._shotGroups[date]) {
+        return;
+      }
+
+      if (this._shotsDate[0] === date) {
+        this._shotsDate.splice(0, 1);
+      }
+      this._viewBox.remove_actor(folder);
+    }
+
+    async _loadShots() {
+      const gradientsLocation = GLib.build_filenamev([
+        Me.path,
+        'objects',
+        'gradients.json'
+      ]);
+      const content = Shell.get_file_contents_utf8_sync(gradientsLocation);
+      let snapshotDir = getShotsLocation();
+      if (!snapshotDir.query_exists(null)) {
+        return;
+      }
+
+      const allShots = await this._processShots(snapshotDir);
+      lg('[UIFolderViewer::_loadShots]', 'all shots:', allShots);
+      // Group shots taken on the same day together
+      const cluster = {};
+      const gradients = JSON.parse(content);
+      shuffle(gradients);
+      this._gradients = gradients;
+      // Keep an ordered list of dates shots were taken
+      this._shotsDate = [];
+      for (const shot of allShots) {
+        const date = fmt(getDate(shot));
+        if (cluster[date] == null) {
+          cluster[date] = [shot];
+          this._shotsDate.push(date);
+        } else {
+          cluster[date].push(shot);
+        }
+      }
+
+      function shuffle(array) {
+        let count = array.length,
+          randomnumber,
+          temp;
+        while (count) {
+          randomnumber = (Math.random() * count--) | 0;
+          temp = array[count];
+          array[count] = array[randomnumber];
+          array[randomnumber] = temp;
+        }
+      }
+
+      this._shotGroups = cluster;
+      lg('[UIFolderViewer::_loadShots::_shotGroups]', cluster);
+
+      return Object.entries(cluster).map(([name, shots], index) =>
+        this._addShot(
+          name,
+          shots,
+          this._gradients[index % this._gradients.length]
+        )
+      );
+    }
+
+    _processShots(directory) {
+      const DEFAULT_ATTRIBUTES = 'standard::*';
+      return new Promise((resolve, reject) => {
+        if (this._entriesEnumerateCancellable) {
+          this._entriesEnumerateCancellable.cancel();
+        }
+        this._entriesEnumerateCancellable = new Gio.Cancellable();
+        directory.enumerate_children_async(
+          DEFAULT_ATTRIBUTES,
+          Gio.FileQueryInfoFlags.NONE,
+          GLib.PRIORITY_DEFAULT,
+          this._entriesEnumerateCancellable,
+          (source, result) => {
+            this._entriesEnumerateCancellable = null;
+            const files = [];
+            try {
+              let fileEnum = source.enumerate_children_finish(result);
+              let info;
+              while ((info = fileEnum.next_file(null))) {
+                const filename = GLib.build_filenamev([
+                  directory.get_path(),
+                  info.get_name()
+                ]);
+                if (!GLib.file_test(filename, GLib.FileTest.IS_DIR)) {
+                  files.push(filename);
+                }
+              }
+            } catch (e) {
+              if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
+                resolve([]);
+              } else {
+                reject('file-read-error');
+              }
+              return;
+            }
+            files.sort(filesDateSorter);
+            resolve(files);
+            return;
+          }
+        );
+      });
+
+      function filesDateSorter(one, other) {
+        const oneDate = getDate(one);
+        const otherDate = getDate(other);
+        return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
+      }
+    }
+  }
+);
+
+const UIFolder = GObject.registerClass(
+  {
+    GTypeName: 'UIFolder',
+    Signals: {
+      activate: {
+        param_types: [Object.prototype]
+      },
+      delete: {}
+    }
+  },
+  class UIFolder extends St.BoxLayout {
+    _init(name, shots, gradient, params) {
+      super._init({ ...params, layout_manager: new Clutter.BinLayout() });
+
+      this._shots = shots;
+      this._label = new St.Label({
+        text: name,
+        x_align: Clutter.ActorAlign.FILL,
+        y_align: Clutter.ActorAlign.CENTER,
+        x_expand: true,
+        y_expand: true,
+        style_class: 'pixzzle-ui-folder-label'
+      });
+      this._label.clutter_text.set_line_wrap(true);
+      this.set_style(singleStyle(gradient));
+      this.add_child(this._label);
+
+      this._trigger = new St.Button({
+        x_align: Clutter.ActorAlign.FILL,
+        y_align: Clutter.ActorAlign.FILL,
+        x_expand: true,
+        y_expand: true
+      });
+      this.add_child(this._trigger);
+
+      this._trigger.connect('clicked', () => {
+        lg('[UIFolder::_init::_trigger::clicked]');
+        this.emit('activate', {});
+      });
+
+      function singleStyle(styles) {
+        return Object.entries(styles).reduce(
+          (acc, [k, v]) => acc + `${k}:${v};`,
+          ''
+        );
+      }
+    }
+  }
+);
+
 /*
  *  Wrapper classes are provided to override the computation
  *  of cursor type in `UIMainViewer`. This way, we don't
@@ -2544,6 +2952,10 @@ const UILayout = GObject.registerClass(
       }
 
       return this._bottom_padding;
+    }
+
+    vfunc_button_press_event(event) {
+      return Clutter.EVENT_STOP;
     }
 
     vfunc_motion_event(event) {

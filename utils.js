@@ -65,3 +65,23 @@ function getShotsLocation() {
 function getThumbnailsLocation() {
   return _getShotStore(getShotsLocation().get_path(), '.thumbnail');
 }
+
+function getDate(fullname) {
+  const name = GLib.path_get_basename(fullname);
+  const uuid = GLib.uuid_string_random().length + 1;
+  const effective = name.slice(uuid, name.indexOf('.'));
+  const parts = effective.match(/(\d+-\d+-\d+)-(\d+-\d+-\d+)/);
+  const [date, time] = [parts[1], parts[2].replaceAll('-', ':')];
+  return Date.parse(date + ' ' + time);
+}
+
+function fmt(shot) {
+  const format = new Date(shot).toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  return format;
+}
