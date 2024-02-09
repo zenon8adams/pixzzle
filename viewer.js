@@ -1423,11 +1423,11 @@ const UIImageRenderer = GObject.registerClass(
            */
           if (this._ocrScanOnEntry) {
             this._ocrScanOnEntry = false;
-            this._openOCRToolkit();
-            this._ocrIndicator.x = (maxWidth - pixbuf.width) / 2;
-            this._ocrIndicator.y = (maxHeight - pixbuf.height) / 2;
-            this._ocrIndicator.width = this._pixbuf.width;
-            this._ocrIndicator.height = this._pixbuf.height;
+            this._openSnipToolkit();
+            this._snipIndicator.x = (maxWidth - pixbuf.width) / 2;
+            this._snipIndicator.y = (maxHeight - pixbuf.height) / 2;
+            this._snipIndicator.width = this._pixbuf.width;
+            this._snipIndicator.height = this._pixbuf.height;
             this._doOCR(this._pixbuf);
           }
         } else if (this._filename) {
@@ -1437,12 +1437,12 @@ const UIImageRenderer = GObject.registerClass(
           this._filename = null;
         }
       });
-      this._ocrIndicator = new St.Widget({
+      this._snipIndicator = new St.Widget({
         style_class: 'pixzzle-ui-ocr-indicator'
       });
-      this.add_child(this._ocrIndicator);
+      this.add_child(this._snipIndicator);
 
-      this._ocrText = new UIOcrTip(this._ocrIndicator, this, {
+      this._ocrText = new UIOcrTip(this._snipIndicator, this, {
         style_class: 'pixzzle-ui-ocrtip',
         x_align: St.Align.START,
         visible: false,
@@ -1451,6 +1451,14 @@ const UIImageRenderer = GObject.registerClass(
       this._ocrText.clutter_text.set_editable(false);
       this._ocrText.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
       this._topParent.add_child(this._ocrText);
+
+      this._snipActions = {
+        [Clutter.KEY_o]: this._doOCR.bind(this),
+        [Clutter.KEY_O]: this._doOCR.bind(this),
+        [Clutter.KEY_c]: this._doCopyImage.bind(this),
+        [Clutter.KEY_C]: this._doCopyImage.bind(this)
+      };
+      this._snipTrigger = null;
     }
 
     _redraw(deltaX, deltaY) {
@@ -1459,7 +1467,7 @@ const UIImageRenderer = GObject.registerClass(
         this._render(deltaX, deltaY, width, height);
       } else {
         this._isPanningEnabled = false;
-        this._closeOCRToolkit();
+        this._closeSnipToolkit();
       }
     }
 
@@ -1485,7 +1493,7 @@ const UIImageRenderer = GObject.registerClass(
          */
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
         if (pixbuf != null) {
-          this._abortOCRSession();
+          this._abortSnipSession();
           this._reOrient(-this._orientation, true /* flush */);
           this._pixbuf = pixbuf;
           this._filename = newFile;
@@ -1654,42 +1662,43 @@ const UIImageRenderer = GObject.registerClass(
     }
 
     _updateToolkits() {
-      this._closeOCRToolkit();
+      this._closeSnipToolkit();
     }
 
-    _closeOCRToolkit() {
-      this._isInOCRSession = false;
-      this._ocrIndicator.hide();
+    _closeSnipToolkit() {
+      this._isInSnipSession = false;
+      this._snipIndicator.hide();
       this._ocrText.close();
+      this._updateCursor();
     }
 
-    _openOCRToolkit() {
+    _openSnipToolkit() {
       if (this._isPanningEnabled) {
         this._isPanningEnabled = !this._isPanningEnabled;
       }
 
       // Perform ocr
-      lg('[UIImageRenderer::_onKeyPress]', 'starting ocr');
-      this._isInOCRSession = !this._isInOCRSession;
-      if (this._isInOCRSession) {
-        this._ocrIndicator.show();
+      lg('[UIImageRenderer::_onKeyPress]', 'setting up snip');
+      this._isInSnipSession = !this._isInSnipSession;
+      if (this._isInSnipSession) {
+        this._snipIndicator.show();
       } else {
-        this._ocrIndicator.hide();
+        this._snipIndicator.hide();
         this._ocrText.close();
       }
-      this._ocrIndicator.set_size(0, 0);
+      this._snipIndicator.set_size(0, 0);
       this._updateCursor();
     }
 
-    _processOCRCapture() {
+    _processSnipCapture() {
       const vw = this._visibleRegionPixbuf.width;
       const vh = this._visibleRegionPixbuf.height;
       const w = this._canvas.width;
       const h = this._canvas.height;
-      const oLeft = this._ocrIndicator.x;
-      const oTop = this._ocrIndicator.y;
-      const oRight = oLeft + this._ocrIndicator.width - 1;
-      const oBottom = oTop + this._ocrIndicator.height - 1;
+      const oLeft = this._snipIndicator.x;
+      const oTop = this._snipIndicator.y;
+      const oRight = oLeft + this._snipIndicator.width - 1;
+      const oBottom = oTop + this._snipIndicator.height - 1;
       const [minX, minY] = [(w - vw) / 2, (h - vh) / 2];
       const [maxX, maxY] = [(w + vw) / 2, (h + vh) / 2];
       let [startX, startY] = [minX, minY];
@@ -1720,14 +1729,14 @@ const UIImageRenderer = GObject.registerClass(
       ) {
         const width = endX - startX + 1;
         const height = endY - startY + 1;
-        if (width < 10 && height < 10) {
-          lg('[UIImageRenderer::_processOCRCapture]', width, height);
-          this._ocrIndicator.set_size(0, 0);
+        if (width < 10 || height < 10) {
+          lg('[UIImageRenderer::_processSnipCapture]', width, height);
+          this._snipIndicator.set_size(0, 0);
           return;
         }
 
-        this._ocrIndicator.set_position(startX, startY);
-        this._ocrIndicator.set_size(width, height);
+        this._snipIndicator.set_position(startX, startY);
+        this._snipIndicator.set_size(width, height);
 
         startX -= minX;
         startY -= minY;
@@ -1743,12 +1752,12 @@ const UIImageRenderer = GObject.registerClass(
           Math.min(endY - startY + 1, vh - startY)
         );
         if (pixbuf === null) {
-          lg('[UIImageRenderer::_processOCRCapture]', 'pixbuf == (null)');
+          lg('[UIImageRenderer::_processSnipCapture]', 'pixbuf == (null)');
           return;
         }
-        this._doOCR(pixbuf);
+        this._snipActions[this._snipTrigger]?.(pixbuf);
       } else {
-        this._ocrIndicator.set_size(0, 0);
+        this._snipIndicator.set_size(0, 0);
       }
     }
 
@@ -1759,7 +1768,7 @@ const UIImageRenderer = GObject.registerClass(
         this._ocrResultAvailable = false;
       }
 
-      this._ocrText.open('Loading...', true /* instantly */);
+      this._ocrText.open(_('Loading...'), true /* instantly */);
 
       this._session = new Soup.Session({ ssl_strict: false });
       const stream = Gio.MemoryOutputStream.new_resizable();
@@ -1803,7 +1812,7 @@ const UIImageRenderer = GObject.registerClass(
               }
               if (status !== Soup.Status.OK) {
                 lg(
-                  '[UIImageRenderer::_processOCRCapture]',
+                  '[UIImageRenderer::_processSnipCapture]',
                   'Error occurred during OCR processing:',
                   status,
                   message.response_body.length,
@@ -1815,15 +1824,19 @@ const UIImageRenderer = GObject.registerClass(
                   status <= Soup.Status.CANT_CONNECT_PROXY
                 ) {
                   this._ocrText.error(
-                    'Unable to connect.\n' +
-                      'Check your internet connection\n' +
-                      'and try again.'
+                    _(
+                      'Unable to connect.\n' +
+                        'Check your internet connection\n' +
+                        'and try again.'
+                    )
                   );
                 } else if (status === Soup.Status.FORBIDDEN) {
                   this._ocrText.error(
-                    'Your API KEY is invalid.\n' +
-                      'Visit https://ocr-space.com\n' +
-                      'to renew your KEY'
+                    _(
+                      'Your API KEY is invalid.\n' +
+                        'Visit https://ocr-space.com\n' +
+                        'to renew your KEY'
+                    )
                   );
                 } else {
                   this._ocrText.error(
@@ -1840,7 +1853,7 @@ const UIImageRenderer = GObject.registerClass(
               );
               const extract = obj?.ParsedResults?.[0]?.ParsedText?.trim() ?? '';
               lg(
-                '[UIImageRenderer::_processOCRCapture]',
+                '[UIImageRenderer::_processSnipCapture]',
                 'data:',
                 data,
                 'extract:',
@@ -1851,7 +1864,7 @@ const UIImageRenderer = GObject.registerClass(
               if (extract !== null && extract.length !== 0) {
                 this._ocrText.open(extract);
               } else {
-                this._ocrText.error('Unable to extract information');
+                this._ocrText.error(_('Unable to extract information'));
               }
               this._ocrResultAvailable = true;
             }.bind(this)
@@ -1860,14 +1873,18 @@ const UIImageRenderer = GObject.registerClass(
       );
     }
 
-    _abortOCRSession() {
-      this._ocrIndicator.hide();
+    _doCopyImage(pixbuf) {
+      this._copyImageToClipboard(pixbuf, _('Selection copied'));
+    }
+
+    _abortSnipSession() {
+      this._snipIndicator.hide();
       this._ocrText.close();
       this._session?.abort();
       this.emit('ocr-cancelled');
     }
 
-    _updateOCRIndicator() {
+    _updateSnipIndicator() {
       let leftX = Math.min(this._originX, this._dragX);
       let topY = Math.min(this._originY, this._dragY);
       const rightX = Math.max(this._originX, this._dragX);
@@ -1888,13 +1905,13 @@ const UIImageRenderer = GObject.registerClass(
         topY = 0;
       }
 
-      this._ocrIndicator.set_position(leftX, topY);
-      this._ocrIndicator.set_size(width + overshootX, height + overshootY);
+      this._snipIndicator.set_position(leftX, topY);
+      this._snipIndicator.set_size(width + overshootX, height + overshootY);
     }
 
     _updateCursor() {
       global.display.set_cursor(
-        this._isInOCRSession ? Meta.Cursor.CROSSHAIR : Meta.Cursor.DEFAULT
+        this._isInSnipSession ? Meta.Cursor.CROSSHAIR : Meta.Cursor.DEFAULT
       );
     }
 
@@ -1905,7 +1922,13 @@ const UIImageRenderer = GObject.registerClass(
     _onKeyPress(event) {
       const symbol = event.keyval;
       if (symbol === Clutter.KEY_Escape) {
-        this._abortOCRSession();
+        const before = this._snipIndicator.visible;
+        this._abortSnipSession();
+        // If we want to exit snip mode entirely
+        const { width, height } = this._snipIndicator;
+        if (!before || width < 10 || height < 10) {
+          this._closeSnipToolkit();
+        }
         return Clutter.EVENT_STOP;
       } else if (symbol === Clutter.KEY_Delete) {
         this._shotWidget?.emit('delete');
@@ -1922,6 +1945,12 @@ const UIImageRenderer = GObject.registerClass(
           direction: Directivity.NEXT
         });
         return Clutter.EVENT_STOP;
+      } else if (isSnipAction.bind(this)(symbol)) {
+        const oldSymbol = this._snipTrigger;
+        this._snipTrigger = symbol;
+        if (!oldSymbol || !(this._isInSnipSession && oldSymbol !== symbol)) {
+          this._openSnipToolkit();
+        }
       } else if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
         if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
           this._pixbuf = this._pixbuf.rotate_simple(
@@ -1941,14 +1970,16 @@ const UIImageRenderer = GObject.registerClass(
               this._visibleRegionPixbuf,
               'Viewport yanked!'
             );
-          } else if (!this._isInOCRSession) {
+          } else if (!this._isInSnipSession) {
             this._copyImageToClipboard(this._pixbuf, 'Image yanked!');
           } else {
             this._copyTextToClipboard(this._ocrText.get_text(), 'Text copied');
           }
         }
-      } else if (symbol === Clutter.KEY_o || symbol === Clutter.KEY_O) {
-        this._openOCRToolkit();
+      }
+
+      function isSnipAction(symbol) {
+        return !!Object.keys(this._snipActions).find((sym) => sym == symbol);
       }
 
       return Clutter.EVENT_PROPAGATE;
@@ -1963,9 +1994,9 @@ const UIImageRenderer = GObject.registerClass(
       this._dragGrab = global.stage.grab(this);
       [this._dragX, this._dragY] = [event.x, event.y];
       [this._originX, this._originY] = [event.x, event.y];
-      if (this._isInOCRSession) {
+      if (this._isInSnipSession) {
         this._ocrText.close();
-        this._ocrIndicator.show();
+        this._snipIndicator.show();
         global.display.set_cursor(Meta.Cursor.CROSSHAIR);
       } else {
         global.display.set_cursor(Meta.Cursor.DND_IN_DRAG);
@@ -1983,8 +2014,8 @@ const UIImageRenderer = GObject.registerClass(
 
       lg('[UIImageRenderer::_onRelease]');
       this._stopDrag();
-      if (this._isInOCRSession) {
-        this._processOCRCapture();
+      if (this._isInSnipSession) {
+        this._processSnipCapture();
       }
 
       const [x, y] = [event.x, event.y];
@@ -2017,7 +2048,7 @@ const UIImageRenderer = GObject.registerClass(
         this._pixbuf.get_height()
       ];
 
-      if (!this._isInOCRSession) {
+      if (!this._isInSnipSession) {
         const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
         if (maxWidth > this.width) {
           this._xpos += panDirection * dx;
@@ -2052,7 +2083,7 @@ const UIImageRenderer = GObject.registerClass(
         }
         this._canvas.invalidate();
       } else {
-        this._updateOCRIndicator();
+        this._updateSnipIndicator();
       }
 
       this._dragX += dx;
