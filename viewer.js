@@ -497,8 +497,8 @@ var UIMainViewer = GObject.registerClass(
       return this._border_width;
     }
 
-    _openOCRToolkit() {
-      this._imageViewer._openOCRToolkit();
+    _openSnipToolkit() {
+      this._imageViewer._openSnipToolkit();
     }
 
     _computeBigViewSize() {
@@ -1019,6 +1019,7 @@ var UIMainViewer = GObject.registerClass(
 
     _updateCursor(x, y) {
       const cursor = this._computeCursorType(x, y);
+      lg('[UIMainViewer::_updateCursor]', cursor);
       global.display.set_cursor(cursor);
     }
 
@@ -1669,7 +1670,6 @@ const UIImageRenderer = GObject.registerClass(
       this._isInSnipSession = false;
       this._snipIndicator.hide();
       this._ocrText.close();
-      this._updateCursor();
     }
 
     _openSnipToolkit() {
@@ -1928,6 +1928,7 @@ const UIImageRenderer = GObject.registerClass(
         const { width, height } = this._snipIndicator;
         if (!before || width < 10 || height < 10) {
           this._closeSnipToolkit();
+          this._updateCursor();
         }
         return Clutter.EVENT_STOP;
       } else if (symbol === Clutter.KEY_Delete) {
