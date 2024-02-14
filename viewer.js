@@ -44,6 +44,7 @@ const Util = imports.misc.util;
 const File = Gio.File;
 const Main = imports.ui.main;
 const GrabHelper = imports.ui.grabHelper;
+const Animator = imports.ui.animation;
 const MessageTray = imports.ui.messageTray;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
@@ -58,6 +59,7 @@ const {
   getShotsLocation,
   getThumbnailsLocation,
   getDate,
+  filesDateSorter,
   fmt
 } = Me.imports.utils;
 const { UIShutter } = Me.imports.screenshot;
@@ -74,6 +76,8 @@ const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const FULLY_OPAQUE = 255;
 const MODAL_CHECK_INTERVAL = 300;
+const FRAME_SIZE = 64;
+const FRAME_RATE = 15;
 /*
  * Store metadata in image ancillary chunk
  * to detect if the image is smaller than
@@ -121,6 +125,7 @@ var UIMainViewer = GObject.registerClass(
       this._viewMode = ViewMode.ADAPTIVE;
       this._tilingDisabled = false;
       this._emptyView = true;
+      this._isFlattened = new GBoolean(true);
 
       Main.layoutManager.addChrome(this);
 
@@ -236,12 +241,11 @@ var UIMainViewer = GObject.registerClass(
       });
       this._buttonBox.add_child(this._settingsButton);
       this._settingsButton.set_pivot_point(0.5, 0.5);
-      this._settingsButton.connect('notify::hover', () => {
-        this._animateSettings();
-      });
-      this._settingsButton.connect('clicked', () => {
-        this._openSettings();
-      });
+      this._settingsButton.connect(
+        'notify::hover',
+        this._animateSettings.bind(this)
+      );
+      this._settingsButton.connect('clicked', this._openSettings.bind(this));
       this._settingsButton.connect('enter-event', this._stopDrag.bind(this));
 
       this._settingsButtonTooltip = new UITooltip(this._settingsButton, {
@@ -282,30 +286,13 @@ var UIMainViewer = GObject.registerClass(
       });
       this._swapIcon.set_pivot_point(0.5, 0.5);
       this._swapButton.connect('notify::checked', (widget) => {
-        const correction = this._heightDiff ? this._heightDiff : 0;
-        const extent = this._swapViewContainer.height - correction;
-        lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
-        this._animateSwap();
-        // folder hidden
-        if (widget.checked) {
-          this._crossSlideAnimate(
-            this._folderView,
-            this._thumbnailView,
-            extent,
-            correction
-          );
-        } else {
-          this._crossSlideAnimate(
-            this._thumbnailView,
-            this._folderView,
-            extent,
-            correction
-          );
+        if (!this._thumbnailView.loading) {
+          this._toggleSwap(widget);
         }
       });
 
       this._swapButtonTooltip = new UITooltip(this._swapButton, {
-        text: _('Toggle SideView'),
+        text: _('Show/Hide group'),
         style_class: 'pixzzle-ui-tooltip',
         visible: false
       });
@@ -330,10 +317,10 @@ var UIMainViewer = GObject.registerClass(
         height: 0
       });
       this._folderView.connect('swap-view', (widget, payload) => {
-        this._thumbnailView.reload(
-          payload,
-          () => (this._swapButton.checked = false)
-        );
+        this._thumbnailView.reload(payload, () => {
+          this._swapButton.checked = false;
+          this._groupingEnabled = !!payload.date;
+        });
       });
       this._folderView.connect('enter-event', this._stopDrag.bind(this));
 
@@ -342,6 +329,7 @@ var UIMainViewer = GObject.registerClass(
         x_expand: false,
         visible: true
       });
+
       this._thumbnailView.connect('replace', (_, shot) => {
         this._imageViewer._replace(shot);
         this._emptyView = this._thumbnailView._shotCount() == 0;
@@ -350,11 +338,53 @@ var UIMainViewer = GObject.registerClass(
         }
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
+      this._thumbnailView.connect('notify::loaded', () => {
+        if (!this._skipFirst) {
+          this._skipFirst = true;
+          return;
+        }
+
+        lg('[UIMainViewer::_init::_thumbnailView::notify::loaded]');
+        this._toggleSwap(this._swapButton);
+      });
 
       this._splitViewXContainer.add_child(this._bigViewContainer);
       this._splitViewXContainer.add_child(this._swapViewContainer);
       this._swapViewContainer.add_child(this._thumbnailView);
       this._swapViewContainer.add_child(this._folderView);
+
+      this._animatedIcon = new Animator.Animation(
+        Gio.File.new_for_path(`${Me.path}/icons/pixzzle-ui-melt-sprite.png`),
+        FRAME_SIZE,
+        FRAME_SIZE,
+        FRAME_RATE
+      );
+
+      this._meltButton = new UIButton({
+        style_class: 'pixzzle-ui-melt-button',
+        child: this._animatedIcon,
+        x_expand: false,
+        reactive: true,
+        x_align: Clutter.ActorAlign.CENTER,
+        visible: !this._isFlattened.get_value(),
+        pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+        x: 0,
+        y: 0
+      });
+      this.add_child(this._meltButton);
+
+      this._meltButton.connect('notify::mapped', () => {
+        this._animatedIcon.play();
+      });
+      this._meltButton.connect('clicked', () => {
+        this._isFlattened.set_value(true);
+      });
+      this._isFlattened.connect('notify::changed', (me) => {
+        if (me.get_value()) {
+          this._folderView.flatten();
+        }
+        this._animateFlatten(me.get_value());
+      });
 
       this._imageViewer = new UIImageRenderer(this);
       this._imageViewer.connect('lock-axis', (_, axis) => {
@@ -430,7 +460,20 @@ var UIMainViewer = GObject.registerClass(
 
       this._loadSettings();
       this.connect('notify::mapped', () => {
+        if (!this.visible) {
+          this._thumbnailView.cancelSubscriptions();
+          return;
+        }
         this._animateSettings();
+
+        // Run only once for the lifetime of the
+        // application
+        if (!this._viewInitialized) {
+          this._folderView.flatten();
+          this._viewInitialized = true;
+        } else {
+          this._thumbnailView.activateSubscriptions();
+        }
       });
 
       this.connect('destroy', this._onDestroy.bind(this));
@@ -550,6 +593,141 @@ var UIMainViewer = GObject.registerClass(
           this._shutter._showUI();
         }
       });
+    }
+
+    _moveFloatingButton(index) {
+      /*
+       * Use `AlignConstraint` with factor
+       * set to `1` to position the button
+       * in the bottom-right corner. This
+       * is how to simulate fixed
+       * positioning. The `x` and `y`
+       * property of the button shifts
+       * it to the desired position.
+       */
+      const meltButtonInfo = [
+        {
+          /*
+           * Play with the values a bit to get a good
+           * initial position
+           */
+          x: -55,
+          y: -80,
+          constraints: [
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.X_AXIS,
+              pivot_point: new Graphene.Point({ x: 0.5, y: 0 }),
+              factor: 1
+            }),
+
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.Y_AXIS,
+              pivot_point: new Graphene.Point({ x: 0, y: 1 }),
+              factor: 1
+            })
+          ]
+        },
+        {
+          x: 20,
+          y: -80,
+          constraints: [
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.X_AXIS,
+              pivot_point: new Graphene.Point({ x: 0, y: 0 }),
+              factor: 0
+            }),
+
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.Y_AXIS,
+              pivot_point: new Graphene.Point({ x: 0, y: 1 }),
+              factor: 1
+            })
+          ]
+        }
+      ];
+      const match = meltButtonInfo[index];
+      this._meltButton.clear_constraints();
+      this._meltButton.set_position(match.x, match.y);
+      for (const constraint of match.constraints) {
+        this._meltButton.add_constraint(constraint);
+      }
+    }
+
+    _animateFlatten(state) {
+      if (state) {
+        this._meltButton.ease({
+          scale_x: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD
+        });
+        this._meltButton.ease({
+          scale_y: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => {
+            this._meltButton.hide();
+            this._animatedIcon.stop();
+          }
+        });
+      } else {
+        this._meltButton.show();
+        this._animatedIcon.play();
+        this._meltButton.ease({
+          scale_x: 1,
+          duration: 400,
+          mode: Clutter.AnimationMode.EASE_IN_OUT_ELASTIC
+        });
+        this._meltButton.ease({
+          scale_y: 1,
+          duration: 400,
+          mode: Clutter.AnimationMode.EASE_IN_OUT_ELASTIC
+        });
+      }
+    }
+
+    _toggleSwap(widget) {
+      const correction = this._heightDiff ? this._heightDiff : 0;
+      const extent = this._swapViewContainer.height - correction;
+      lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
+      this._animateSwap();
+      // folder hidden
+      if (widget.checked) {
+        this._crossSlideAnimate(
+          this._folderView,
+          this._thumbnailView,
+          extent,
+          correction
+        );
+      } else {
+        this._crossSlideAnimate(
+          this._thumbnailView,
+          this._folderView,
+          extent,
+          correction
+        );
+      }
+
+      if (!this._meltButton.visible) {
+        this._isFlattened.set_value(false);
+      }
+
+      /*
+       * When the MainViewer becomes visible,
+       * we show a list of all the shots
+       * taken. In this view mode, no `date`
+       * has been selected. We use this
+       * `_groupingEnabled` to determine if
+       * we are in this mode. We should
+       * keep hiding the melt button if
+       * we are back in this view mode.
+       */
+      if (!this._groupingEnabled) {
+        this._animateFlatten(!this._swapButton.checked);
+      }
     }
 
     _crossSlideAnimate(one, other, extent, correction) {
@@ -681,6 +859,8 @@ var UIMainViewer = GObject.registerClass(
           ...this._splitViewXContainer.get_children()
         );
       }
+
+      this._moveFloatingButton(viewIndex);
 
       this._tilingDisabled = this._settings.get_boolean(
         Prefs.Fields.DISABLE_TILE_MODE
@@ -856,31 +1036,23 @@ var UIMainViewer = GObject.registerClass(
         return;
       }
 
-      new Timer(this).add(
-        300,
-        function () {
-          const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
-          this.opacity = newOpacity;
-          if (!this._isActive) {
-            this.show();
-          } else {
-            this._closeSettings();
-          }
-          this.ease({
-            opacity: FULLY_OPAQUE - newOpacity,
-            duration: 150,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => {
-              this._isActive && this.hide();
-              this._isActive = !this._isActive;
-            }
-          });
-
+      const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
+      this.opacity = newOpacity;
+      if (!this._isActive) {
+        this.show();
+      } else {
+        this._closeSettings();
+      }
+      this.ease({
+        opacity: FULLY_OPAQUE - newOpacity,
+        duration: 150,
+        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        onComplete: () => {
+          this._isActive && this.hide();
+          this._isActive = !this._isActive;
           lg('[UIMainViewer::_toggleUI]');
-          return GLib.SOURCE_REMOVE;
-        }.bind(this),
-        'UIMainViewer._toggleUI'
-      );
+        }
+      });
     }
 
     reset() {
@@ -1476,7 +1648,13 @@ const UIImageRenderer = GObject.registerClass(
       const newFile = shot.name;
       this._shotWidget = shot.widget;
       this._ocrScanOnEntry = shot.ocr;
-      lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
+      lg(
+        '[UIImageRenderer::_replace]',
+        'newFile:',
+        newFile,
+        'next shot:',
+        this._shotWidget
+      );
       if (newFile === null) {
         this._unload();
         this.set_size(0, 0);
@@ -1932,6 +2110,11 @@ const UIImageRenderer = GObject.registerClass(
         }
         return Clutter.EVENT_STOP;
       } else if (symbol === Clutter.KEY_Delete) {
+        lg(
+          '[UIImageRenderer::_onKeyPress]',
+          'file to be deleted:',
+          this._shotWidget?._filename
+        );
         this._shotWidget?.emit('delete');
         return Clutter.EVENT_STOP;
       } else if (symbol === Clutter.KEY_Left) {
@@ -2373,7 +2556,8 @@ const UISideViewBase = GObject.registerClass(
           orientation: Clutter.Orientation.VERTICAL,
           spacing: 6
         }),
-        y_align: Clutter.ActorAlign.START
+        y_align: Clutter.ActorAlign.START,
+        y_expand: true
       });
       this._scrollView.add_actor(this._viewBox);
     }
@@ -2383,30 +2567,38 @@ const UISideViewBase = GObject.registerClass(
 const UIThumbnailViewer = GObject.registerClass(
   {
     GTypeName: 'UIThumbnailViewer',
-    Signals: { replace: { param_types: [Object.prototype] } }
+    Signals: { replace: { param_types: [Object.prototype] } },
+    Properties: {
+      loaded: GObject.ParamSpec.boolean(
+        'loaded',
+        'loaded',
+        'loaded',
+        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
+        false,
+        true,
+        false
+      )
+    }
   },
   class UIThumbnailViewer extends UISideViewBase {
     _init(sibling, params) {
       super._init(params);
 
       this._sibling = sibling;
-
-      this._connector = this.connect('notify::mapped', () => {
-        lg('[UIThumbnailViewer::_init::notify::mapped]');
-        this._initialize(null, () => this.disconnect(this._connector));
-      });
+      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _initialize(payload, onComplete) {
       if (!this._initialized) {
         this._loadShots(payload)
-          .then((allShots) => {
-            this.emit('replace', allShots[0] ?? {});
+          .then(([shots, batch]) => {
+            this.emit('replace', shots[0] ?? {});
             onComplete?.();
+            this._initialized = true;
+            this.notify('loaded');
+            this._streamBatch(batch);
           })
           .catch((err) => logError(err, 'Unable to load previous state'));
-      } else {
-        this._initialized = true;
       }
     }
 
@@ -2415,34 +2607,116 @@ const UIThumbnailViewer = GObject.registerClass(
       this._initialize(shots, cb);
     }
 
+    _streamBatch(batch) {
+      this.cancelSubscriptions();
+      if (batch.length === 0) {
+        return;
+      }
+
+      const CHUNK = 4;
+      let index = 0;
+      this._batchId = GLib.timeout_add(
+        GLib.PRIORITY_DEFAULT,
+        300,
+        function () {
+          const next = batch.slice(index, index + CHUNK);
+          for (const shot of next) {
+            this._addShot(shot);
+          }
+          lg(
+            '[UIThumbnailViewer::_streamBatch::timeout_add]',
+            'index:',
+            index,
+            'current:',
+            next.length
+          );
+          index += next.length;
+          this._nextBatch = batch.slice(index);
+          if (next.length === 0) {
+            this.cancelSubscriptions();
+            return GLib.SOURCE_REMOVE;
+          }
+
+          return GLib.SOURCE_CONTINUE;
+        }.bind(this)
+      );
+      GLib.Source.set_name_by_id(
+        this._batchId,
+        '[pixzzle] UIThumbnailViewer._streamBatch'
+      );
+    }
+
+    cancelSubscriptions() {
+      if (this._batchId) {
+        GLib.source_remove(this._batchId);
+        this._batchId = null;
+      }
+    }
+
+    /**
+     * If there's a paused batching operation,
+     * resume it. A batch is a collection
+     * of shots that are yet to be added
+     * to the stage (ThumbnailViewer).
+     * When main window is hidden, we don't
+     * want any background actions running.
+     * Hiding the main window before some
+     * actions complete causes the view
+     * to have incomplete data. We continue
+     * with such operations.
+     */
+    activateSubscriptions() {
+      if (!this._nextBatch?.length) {
+        return;
+      }
+
+      this._streamBatch(this._nextBatch);
+    }
+
+    _maxVisibleShots() {
+      const sibling_extent = this._sibling.get_transformed_extents();
+      const this_extent = this.get_transformed_extents();
+      const isSiblingNaN = Number.isNaN(sibling_extent.get_height());
+      const isThisNaN = Number.isNaN(this_extent.get_height());
+      const sibling_height = isSiblingNaN
+        ? INITIAL_HEIGHT * 0.8
+        : sibling_extent.get_height();
+      const this_height = isThisNaN
+        ? INITIAL_HEIGHT * 0.8
+        : this_extent.get_height();
+
+      const effective_height = Math.max(this_height, sibling_height);
+      return Math.floor(effective_height / this.width);
+    }
+
     _addShot(newShot, prepend) {
       const shot = new UIPreview(newShot, this.width);
       shot.connect('activate', (widget) => {
-        lg('UIThumbnailViewer::_addShot::shot::activate]', widget);
-        this.emit('replace', { name: widget._filename, widget: widget });
+        this.emit('replace', { name: widget._filename, widget: shot });
       });
       shot.connect('delete', (widget) => {
-        this._removeShot(widget).then((filename) => {
+        this._removeShot(shot).then((filename) => {
           const nextShot = this._viewBox.get_child_at_index(0);
           this.emit('replace', {
             name: nextShot?._filename ?? null,
-            widget: widget
+            widget: nextShot
           });
           const name = GLib.path_get_basename(filename);
           const thumbnail = GLib.build_filenamev([
             getThumbnailsLocation().get_path(),
             name
           ]);
-          lg(
-            '[UIThumbnailViewer::_addShot::shot::delete]',
-            thumbnail,
-            filename
-          );
+
           GLib.unlink(filename);
           GLib.unlink(thumbnail);
-          this._sibling.removeShot(this._date, this._currentFolder, filename);
+          this._sibling.removeShot(this._date, filename);
+
+          if (!nextShot) {
+            this.reload();
+          }
         });
       });
+
       if (prepend) {
         this._viewBox.insert_child_at_index(shot, 0);
       } else {
@@ -2502,10 +2776,19 @@ const UIThumbnailViewer = GObject.registerClass(
     async _loadShots(payload) {
       this._viewBox.destroy_all_children();
       const bundle = payload ?? (await this._sibling.latestShot());
+      lg('[UIThumbnailViewer::_loadShots]', 'payload:', bundle.shots.length);
+      this._is_flat = bundle.is_flat;
       this._date = bundle.date;
-      this._currentFolder = bundle.widget;
       const shots = [];
-      for (const shot of bundle.shots) {
+      const section = bundle.shots.slice(0, this._maxVisibleShots());
+      lg(
+        '[UIThumbnailViewer::_loadShots]',
+        'number of initial thumbs:',
+        section.length,
+        'total number of shots:',
+        bundle.shots.length
+      );
+      for (const shot of section) {
         shots.push(this._addShot(shot));
       }
       const newShotProps = bundle.nid;
@@ -2513,7 +2796,17 @@ const UIThumbnailViewer = GObject.registerClass(
         this.emit('replace', { ...newShotProps, ...shots[0] });
       }
 
-      return shots;
+      const unloaded = bundle.shots.slice(section.length);
+
+      return [shots, unloaded];
+    }
+
+    get loading() {
+      return !this._initialized;
+    }
+
+    _onDestroy() {
+      this.cancelSubscriptions();
     }
   }
 );
@@ -2663,6 +2956,7 @@ const UIFolderViewer = GObject.registerClass(
   class UIFolderViewer extends UISideViewBase {
     _init(params) {
       super._init(params);
+      this._folders = {};
     }
 
     _addShot(name, shots, gradient, extras = {}, prepend = false) {
@@ -2684,10 +2978,8 @@ const UIFolderViewer = GObject.registerClass(
         this.emit('swap-view', {
           shots: widget._shots,
           date: name,
-          widget: folder,
           ...override
         });
-        lg('[UIFolderViewer::_addShot::folder::activate]', widget._shots);
       });
       /*
       shot.connect('delete', (widget) => {
@@ -2707,6 +2999,7 @@ const UIFolderViewer = GObject.registerClass(
       }
 
       folder.set_size(this.width, this.width);
+      this._folders[name] = folder;
 
       return folder;
     }
@@ -2758,21 +3051,39 @@ const UIFolderViewer = GObject.registerClass(
       }
     }
 
-    removeShot(date, folder, shot) {
-      lg('[UIFolderViewer::removeShot]', 'date:', date, 'shot:', shot);
-      const index = this._shotGroups[date].findIndex((name) => name === shot);
-      this._shotGroups[date].splice(index, 1);
-      if (this._shotGroups[date].length === 0) {
-        delete this._shotGroups[date];
+    removeShot(date, shot) {
+      lg(
+        '[UIFolderViewer::removeShot]',
+        'date:',
+        date,
+        'shot:',
+        shot,
+        this._shotsDate
+      );
+
+      const [index, new_date] = this._locate(shot, date);
+      this._shotGroups[new_date].splice(index, 1);
+      if (this._shotGroups[new_date].length === 0) {
+        delete this._shotGroups[new_date];
       }
-      if (this._shotGroups[date]) {
+      if (this._shotGroups[new_date]) {
         return;
       }
 
-      if (this._shotsDate[0] === date) {
+      if (this._shotsDate[0] === new_date) {
         this._shotsDate.splice(0, 1);
       }
-      this._viewBox.remove_actor(folder);
+      this._viewBox.remove_actor(this._folders[new_date]);
+      delete this._folders[new_date];
+    }
+
+    _locate(shot, date) {
+      for (const d of date ? [date] : this._shotsDate) {
+        const idx = this._shotGroups[d].findIndex((name) => name === shot);
+        if (idx !== -1) {
+          return [idx, d];
+        }
+      }
     }
 
     async _loadShots() {
@@ -2788,7 +3099,6 @@ const UIFolderViewer = GObject.registerClass(
       }
 
       const allShots = await this._processShots(snapshotDir);
-      lg('[UIFolderViewer::_loadShots]', 'all shots:', allShots);
       // Group shots taken on the same day together
       const cluster = {};
       const gradients = JSON.parse(content);
@@ -2828,6 +3138,24 @@ const UIFolderViewer = GObject.registerClass(
           this._gradients[index % this._gradients.length]
         )
       );
+    }
+
+    async flatten() {
+      if (!this._shotGroups) {
+        await this._loadShots();
+      }
+
+      const shots = Object.entries(this._shotGroups).reduce(
+        (acc, [key, value]) => acc.concat(value),
+        []
+      );
+      shots.sort(filesDateSorter);
+      this.emit('swap-view', { shots, is_flat: true });
+    }
+
+    async activate(n) {
+      lg('[UIFolderViewer::activate]', 'triggering ', n);
+      this._folders[n]?.emit('activate', {});
     }
 
     _processShots(directory) {
@@ -2871,12 +3199,6 @@ const UIFolderViewer = GObject.registerClass(
           }
         );
       });
-
-      function filesDateSorter(one, other) {
-        const oneDate = getDate(one);
-        const otherDate = getDate(other);
-        return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
-      }
     }
   }
 );
@@ -2891,7 +3213,7 @@ const UIFolder = GObject.registerClass(
       delete: {}
     }
   },
-  class UIFolder extends St.BoxLayout {
+  class UIFolder extends St.Widget {
     _init(name, shots, gradient, params) {
       super._init({ ...params, layout_manager: new Clutter.BinLayout() });
 
@@ -2927,6 +3249,43 @@ const UIFolder = GObject.registerClass(
           ''
         );
       }
+    }
+  }
+);
+
+const GBoolean = GObject.registerClass(
+  {
+    Properties: {
+      changed: GObject.ParamSpec.boolean(
+        'changed',
+        'changed',
+        'changed',
+        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
+        false,
+        true,
+        false
+      )
+    }
+  },
+
+  class GBoolean extends GObject.Object {
+    _init(initial_state) {
+      super._init();
+
+      this._value = initial_state;
+    }
+
+    get_value() {
+      return this._value;
+    }
+
+    set_value(new_val) {
+      if (new_val === this._value) {
+        return;
+      }
+
+      this._value = new_val;
+      this.notify('changed');
     }
   }
 );

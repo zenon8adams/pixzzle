@@ -240,6 +240,12 @@
   icon-size: 1em;
 }
 
+.pixzzle-ui-melt-button {
+  border: 1px solid #507ab9;
+  background-color: #fff;
+  border-radius: 99px;
+}
+
 .pixzzle-ui-thumbnail-scrollview {
   border-top: 0.6em;
   border-bottom: 0.6em;

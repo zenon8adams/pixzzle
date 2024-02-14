@@ -75,6 +75,12 @@ function getDate(fullname) {
   return Date.parse(date + ' ' + time);
 }
 
+function filesDateSorter(one, other) {
+  const oneDate = getDate(one);
+  const otherDate = getDate(other);
+  return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
+}
+
 function fmt(shot) {
   const format = new Date(shot).toLocaleDateString('en-US', {
     weekday: 'long',
