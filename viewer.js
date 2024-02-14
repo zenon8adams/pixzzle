@@ -62,6 +62,7 @@ const {
   filesDateSorter,
   fmt
 } = Me.imports.utils;
+const { storeScreenshot } = Me.imports.common;
 const { UIShutter } = Me.imports.screenshot;
 const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
@@ -444,9 +445,12 @@ var UIMainViewer = GObject.registerClass(
         this._emptyView = true;
       });
       this._imageViewer.connect('enter-event', this._stopDrag.bind(this));
-      this._imageViewer.connect('switch-active', (widget, detail) => {
+      this._imageViewer.connect('switch-active', (me, detail) => {
         lg('[UIMainViewer::_init::_imageViewer::switch-active]');
         this._thumbnailView._switchActive(detail);
+      });
+      this._imageViewer.connect('new-shot', (me, shot) => {
+        this._folderView.addNewShot({ name: shot }).catch(logError);
       });
       this._bigViewContainer.add_child(this._imageViewer);
 
@@ -1533,7 +1537,8 @@ const UIImageRenderer = GObject.registerClass(
       'lock-axis': { param_types: [Object.prototype] },
       'clean-slate': {},
       'ocr-cancelled': {},
-      'switch-active': { param_types: [Object.prototype] }
+      'switch-active': { param_types: [Object.prototype] },
+      'new-shot': { param_types: [GObject.TYPE_STRING] }
     }
   },
   class UIImageRenderer extends St.Widget {
@@ -1629,7 +1634,9 @@ const UIImageRenderer = GObject.registerClass(
         [Clutter.KEY_o]: this._doOCR.bind(this),
         [Clutter.KEY_O]: this._doOCR.bind(this),
         [Clutter.KEY_c]: this._doCopyImage.bind(this),
-        [Clutter.KEY_C]: this._doCopyImage.bind(this)
+        [Clutter.KEY_C]: this._doCopyImage.bind(this),
+        [Clutter.KEY_x]: this._doAddCutout.bind(this),
+        [Clutter.KEY_X]: this._doAddCutout.bind(this)
       };
       this._snipTrigger = null;
     }
@@ -1785,7 +1792,7 @@ const UIImageRenderer = GObject.registerClass(
       source.showNotification(notification);
     }
 
-    _copyImageToClipboard(pixbuf, message) {
+    _copyImageToClipboard(pixbuf, message, onComplete = null) {
       if (this._clipboardCopyCancellable) {
         this._clipboardCopyCancellable.cancel();
       }
@@ -1807,6 +1814,8 @@ const UIImageRenderer = GObject.registerClass(
           const bytes = stream.steal_as_bytes();
           clipboard.set_content(St.ClipboardType.CLIPBOARD, 'image/png', bytes);
           lg('[UIImageRenderer::_copyToClipboard]');
+
+          onComplete?.(bytes);
 
           const time = GLib.DateTime.new_now_local();
           const pixels = pixbuf.read_pixel_bytes();
@@ -2053,6 +2062,17 @@ const UIImageRenderer = GObject.registerClass(
 
     _doCopyImage(pixbuf) {
       this._copyImageToClipboard(pixbuf, _('Selection copied'));
+    }
+
+    _doAddCutout(pixbuf) {
+      this._copyImageToClipboard(pixbuf, _('Selection copied'), (bytes) => {
+        const filename = storeScreenshot(bytes, pixbuf);
+        this._addNewShot(filename);
+      });
+    }
+
+    _addNewShot(shot) {
+      this.emit('new-shot', shot);
     }
 
     _abortSnipSession() {
