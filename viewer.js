@@ -336,6 +336,7 @@ var UIMainViewer = GObject.registerClass(
         this._emptyView = this._thumbnailView._shotCount() == 0;
         if (this._emptyView) {
           this._swapButton.checked = true;
+          this._imageViewer.abortSnipSession();
         }
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
@@ -1662,7 +1663,7 @@ const UIImageRenderer = GObject.registerClass(
         'next shot:',
         this._shotWidget
       );
-      if (newFile === null) {
+      if (newFile == null) {
         this._unload();
         this.set_size(0, 0);
         this._reOrient(-this._orientation, true /* flush */);
@@ -1679,7 +1680,7 @@ const UIImageRenderer = GObject.registerClass(
          */
         const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
         if (pixbuf != null) {
-          this._abortSnipSession();
+          this.abortSnipSession();
           this._reOrient(-this._orientation, true /* flush */);
           this._pixbuf = pixbuf;
           this._filename = newFile;
@@ -1776,23 +1777,21 @@ const UIImageRenderer = GObject.registerClass(
       const clipboard = St.Clipboard.get_default();
       clipboard.set_text(St.ClipboardType.CLIPBOARD, text);
 
-      // Show a notification.
-      const source = new MessageTray.Source(
-        _('Pixzzle'),
+      this._notifyUser(
+        message,
+        'Text is available in your clipboard',
         'screenshot-recorded-symbolic'
       );
-      const notification = new MessageTray.Notification(
-        source,
-        _(`${message}`),
-        _('Text is available in your clipboard'),
-        {}
-      );
-      notification.setTransient(true);
-      Main.messageTray.add(source);
-      source.showNotification(notification);
     }
 
     _copyImageToClipboard(pixbuf, message, onComplete = null) {
+      if (pixbuf == null) {
+        this._notifyUser(
+          'No image is available',
+          'Click the `Add New` button to add screenshot'
+        );
+        return;
+      }
       if (this._clipboardCopyCancellable) {
         this._clipboardCopyCancellable.cancel();
       }
@@ -1831,22 +1830,26 @@ const UIImageRenderer = GObject.registerClass(
             pixbuf.rowstride
           );
 
-          // Show a notification.
-          const source = new MessageTray.Source(
-            _('Pixzzle'),
+          this._notifyUser(
+            message,
+            'You can paste the image from the clipboard.',
             'screenshot-recorded-symbolic'
           );
-          const notification = new MessageTray.Notification(
-            source,
-            _(`${message}`),
-            _('You can paste the image from the clipboard.'),
-            { datetime: time, gicon: content }
-          );
-          notification.setTransient(true);
-          Main.messageTray.add(source);
-          source.showNotification(notification);
         }
       );
+    }
+
+    _notifyUser(message, description, thumbnail) {
+      const source = new MessageTray.Source(_('Pixzzle'), thumbnail ?? '');
+      const notification = new MessageTray.Notification(
+        source,
+        _(message),
+        _(description),
+        {}
+      );
+      notification.setTransient(true);
+      Main.messageTray.add(source);
+      source.showNotification(notification);
     }
 
     _updateToolkits() {
@@ -2075,7 +2078,7 @@ const UIImageRenderer = GObject.registerClass(
       this.emit('new-shot', shot);
     }
 
-    _abortSnipSession() {
+    abortSnipSession() {
       this._snipIndicator.hide();
       this._ocrText.close();
       this._session?.abort();
@@ -2121,7 +2124,7 @@ const UIImageRenderer = GObject.registerClass(
       const symbol = event.keyval;
       if (symbol === Clutter.KEY_Escape) {
         const before = this._snipIndicator.visible;
-        this._abortSnipSession();
+        this.abortSnipSession();
         // If we want to exit snip mode entirely
         const { width, height } = this._snipIndicator;
         if (!before || width < 10 || height < 10) {
@@ -2129,6 +2132,31 @@ const UIImageRenderer = GObject.registerClass(
           this._updateCursor();
         }
         return Clutter.EVENT_STOP;
+      } else if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
+        if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
+          this._pixbuf = this._pixbuf.rotate_simple(
+            GdkPixbuf.PixbufRotation.CLOCKWISE
+          );
+          this._reOrient(1);
+          this._reload();
+        } else if (symbol === Clutter.KEY_l || symbol === Clutter.KEY_L) {
+          this._pixbuf = this._pixbuf.rotate_simple(
+            GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE
+          );
+          this._reOrient(N_AXIS - 1);
+          this._reload();
+        } else if (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C) {
+          if (event.modifier_state & Clutter.ModifierType.SHIFT_MASK) {
+            this._copyImageToClipboard(
+              this._visibleRegionPixbuf,
+              'Viewport yanked!'
+            );
+          } else if (!this._isInSnipSession) {
+            this._copyImageToClipboard(this._pixbuf, 'Image yanked!');
+          } else {
+            this._copyTextToClipboard(this._ocrText.get_text(), 'Text copied');
+          }
+        }
       } else if (symbol === Clutter.KEY_Delete) {
         lg(
           '[UIImageRenderer::_onKeyPress]',
@@ -2154,31 +2182,6 @@ const UIImageRenderer = GObject.registerClass(
         this._snipTrigger = symbol;
         if (!oldSymbol || !(this._isInSnipSession && oldSymbol !== symbol)) {
           this._openSnipToolkit();
-        }
-      } else if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
-        if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
-          this._pixbuf = this._pixbuf.rotate_simple(
-            GdkPixbuf.PixbufRotation.CLOCKWISE
-          );
-          this._reOrient(1);
-          this._reload();
-        } else if (symbol === Clutter.KEY_l || symbol === Clutter.KEY_L) {
-          this._pixbuf = this._pixbuf.rotate_simple(
-            GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE
-          );
-          this._reOrient(N_AXIS - 1);
-          this._reload();
-        } else if (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C) {
-          if (event.modifier_state & Clutter.ModifierType.SHIFT_MASK) {
-            this._copyImageToClipboard(
-              this._visibleRegionPixbuf,
-              'Viewport yanked!'
-            );
-          } else if (!this._isInSnipSession) {
-            this._copyImageToClipboard(this._pixbuf, 'Image yanked!');
-          } else {
-            this._copyTextToClipboard(this._ocrText.get_text(), 'Text copied');
-          }
         }
       }
 
@@ -2706,7 +2709,7 @@ const UIThumbnailViewer = GObject.registerClass(
         : this_extent.get_height();
 
       const effective_height = Math.max(this_height, sibling_height);
-      return Math.floor(effective_height / this.width);
+      return Math.floor((effective_height * 2) / this.width);
     }
 
     _addShot(newShot, prepend) {
@@ -2979,26 +2982,15 @@ const UIFolderViewer = GObject.registerClass(
       this._folders = {};
     }
 
-    _addShot(name, shots, gradient, extras = {}, prepend = false) {
+    _addShot(name, shots, gradient, prepend = false) {
       const folder = new UIFolder(name, shots, gradient, {
         style_class: 'pixzzle-ui-folder'
       });
       folder.connect('activate', (widget, params) => {
-        /* If `params` is empty, the `shots` array doesn't contain
-         * a new screenshot. Don't send `extras` which may contain
-         * stale shots data. We do this because of properties such
-         * as `nid` used in tagging of new shots. This property
-         * is used in determining if for example ocr should be
-         * performed once the shot is staged. If `extras` is not
-         * cleared, ocr action will be repeatedly performed once
-         * the shot with the `ocr` property is staged.
-         */
-        const override =
-          Object.keys(params).length == 0 ? {} : { ...extras, ...params };
         this.emit('swap-view', {
           shots: widget._shots,
           date: name,
-          ...override
+          ...params
         });
       });
       /*
@@ -3042,6 +3034,7 @@ const UIFolderViewer = GObject.registerClass(
     }
 
     async addNewShot(newShot) {
+      lg('[UIFolderViewer::addNewShot]', newShot.ocr);
       if (!this._shotGroups) {
         await this._loadShots();
       }
@@ -3049,19 +3042,19 @@ const UIFolderViewer = GObject.registerClass(
       /*
        * The `nid` property sent via the `activate`
        * signal helps distinguish new screenshots
-       * with metadata attached from stale shots.
+       * with metadata attached from old shots.
        */
       const today = fmt(Date.now());
       if (!this._shotGroups[today]) {
+        lg('[UIFolderViewer::addNewShot] today:', today);
         this._shotGroups[today] = [newShot.name];
         const folder = this._addShot(
           today,
           this._shotGroups[today],
           this._gradients[Math.floor(Math.random() * this._gradients.length)],
-          { nid: newShot },
           true /* prepend */
         );
-        folder.emit('activate', {});
+        folder.emit('activate', {nid: newShot});
       } else {
         // Insert new shots name at the front to maintain
         // sort ordering.
