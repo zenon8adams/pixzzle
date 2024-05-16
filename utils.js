@@ -21,6 +21,10 @@ const { Gio, GLib } = imports.gi;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
+var Constants = {
+    FULLY_OPAQUE: 255
+};
+
 var SCHEMA_NAME = 'org.gnome.shell.extensions.pixzzle';
 
 const debug = false;

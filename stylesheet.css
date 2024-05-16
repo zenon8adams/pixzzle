@@ -243,7 +243,11 @@
 .pixzzle-ui-melt-button {
   border: 1px solid #507ab9;
   background-color: #fff;
-  border-radius: 99px;
+  border-radius: 299px;
+}
+
+.pixzzle-ui-melt-button StIcon {
+  icon-size: 3.5em;
 }
 
 .pixzzle-ui-thumbnail-scrollview {
@@ -273,7 +277,7 @@
 .pixzzle-ui-settings-button {
   color: white;
   background-color: rgba(0, 0, 0, 0.2);
-  padding: 4px;
+  padding: 5px;
   border-radius: 99px;
 }
 .pixzzle-ui-settings-button StIcon {

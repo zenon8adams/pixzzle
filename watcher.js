@@ -84,6 +84,8 @@ class ActionWatcher {
           GLib.source_remove(this._timeoutId);
           this._timeoutId = 0;
         }
+        this._watches.forEach((watch) => watch.remove());
+        this._watches = null;
       }.bind(this)
     );
   }

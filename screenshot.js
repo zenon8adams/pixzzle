@@ -1123,11 +1123,11 @@ var UIShutter = GObject.registerClass(
       });
       this._bottomRowContainer.add_child(this._showPointerButtonContainer);
 
-      const iconName = 'pixzzle-ui-ocr-action-symbolic.svg';
+      const iconPath = 'icons/pixzzle-ui-ocr-action-symbolic.svg';
       this._ocrActionButton = new St.Button({
         style_class: 'pixzzle-ui-ocr-action-button',
         child: new St.Icon({
-          gicon: Gio.icon_new_for_string(`${Me.path}/icons/${iconName}`),
+          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
           style_class: 'pixzzle-ui-ocr-action-icon'
         }),
         toggle_mode: true
