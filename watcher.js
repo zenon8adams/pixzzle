@@ -85,7 +85,7 @@ class ActionWatcher {
           this._timeoutId = 0;
         }
         this._watches.forEach((watch) => watch.remove());
-        this._watches = null;
+        this._watches = [];
       }.bind(this)
     );
   }
