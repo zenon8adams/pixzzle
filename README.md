@@ -24,5 +24,13 @@ Pixzzle is a dynamic GNOME extension written in GJS (GNOME JavaScript) that elev
 
 Pixzzle is released under the [GNU GPLv3 License](https://github.com/zenon8adams/pixzzle/blob/master/LICENSE)
 
+
+## Credits
+The following icon creators are attributed:
+  * <a href="https://www.flaticon.com/free-icons/cycle" title="cycle icons">Cycle icons created by kmg design - Flaticon</a>
+  * <a href="https://www.flaticon.com/free-icons/paste" title="paste icons">Paste icons created by Pixel perfect - Flaticon</a>
+  * <a href="https://www.flaticon.com/free-icons/sections" title="sections icons">Sections icons created by Pixel perfect - Flaticon</a>
+  * <a href="https://www.flaticon.com/free-icons/user-interface" title="user interface icons">User interface icons created by pojok d - Flaticon</a>
+
 ## Contact Us
 Have questions or need support? Feel free to reach out at zenon8adams@gmail.com
