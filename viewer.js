@@ -30,17 +30,7 @@ const {
   Soup,
   Pango
 } = imports.gi;
-
-/*
- * Import only what you need as importing Gdk in shell process is
- * not allowed.
- * https://gjs.guide/extensions/review-guidelines/review-guidelines.html
- * #do-not-import-gtk-libraries-in-gnome-shell
- */
-const { cairo_set_source_pixbuf } = imports.gi.Gdk;
-
 const Cairo = imports.cairo;
-const Util = imports.misc.util;
 const File = Gio.File;
 const Main = imports.ui.main;
 const GrabHelper = imports.ui.grabHelper;
@@ -53,13 +43,15 @@ const _ = Gettext.domain('pixzzle').gettext;
 
 const {
   inflateSettings,
-  SCHEMA_NAME,
   lg,
   getShotsLocation,
   getThumbnailsLocation,
   getDate,
-  fmt
+  filesDateSorter,
+  fmt,
+  Constants
 } = Me.imports.utils;
+const { storeScreenshot } = Me.imports.common;
 const { UIShutter } = Me.imports.screenshot;
 const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
@@ -67,12 +59,13 @@ const Prefs = Me.imports.prefs;
 const { getActionWatcher } = Me.imports.watcher;
 const { Timer } = Me.imports.timer;
 const { UITooltip } = Me.imports.tooltip;
+const { UIImageRenderer } = Me.imports.renderer;
+const Docking = Me.imports.dock.docking;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
-const FULLY_OPAQUE = 255;
 const MODAL_CHECK_INTERVAL = 300;
 /*
  * Store metadata in image ancillary chunk
@@ -82,11 +75,7 @@ const MODAL_CHECK_INTERVAL = 300;
  */
 const TINY_IMAGE = 'tINy';
 
-const OCR_URL = 'http://api.ocr.space/parse/image';
-
 let SETTING_DISABLE_TILE_MODE;
-let SETTING_NATURAL_PANNING;
-let SETTING_OCR_API;
 
 const ViewMode = Object.freeze({
   ADAPTIVE: Symbol('adaptive'),
@@ -121,6 +110,7 @@ var UIMainViewer = GObject.registerClass(
       this._viewMode = ViewMode.ADAPTIVE;
       this._tilingDisabled = false;
       this._emptyView = true;
+      this._isFlattened = new GBoolean(true);
 
       Main.layoutManager.addChrome(this);
 
@@ -129,14 +119,11 @@ var UIMainViewer = GObject.registerClass(
        * when there's a change in the number of dialogs
        * visible as defined by `Main.modalCount`.
        */
-      this._modalWatcher = getActionWatcher(this).addWatch(
-        MODAL_CHECK_INTERVAL,
-        {
-          reaction: this._close.bind(this, true /* instantly */),
-          compare: (one, other) => one === other,
-          action: () => Main.modalCount
-        }
-      );
+      const watcher = getActionWatcher(this).addWatch(MODAL_CHECK_INTERVAL, {
+        reaction: this._close.bind(this, true /* instantly */),
+        compare: (one, other) => one === other,
+        action: () => Main.modalCount
+      });
 
       this.reset();
 
@@ -236,12 +223,11 @@ var UIMainViewer = GObject.registerClass(
       });
       this._buttonBox.add_child(this._settingsButton);
       this._settingsButton.set_pivot_point(0.5, 0.5);
-      this._settingsButton.connect('notify::hover', () => {
-        this._animateSettings();
-      });
-      this._settingsButton.connect('clicked', () => {
-        this._openSettings();
-      });
+      this._settingsButton.connect(
+        'notify::hover',
+        this._animateSettings.bind(this)
+      );
+      this._settingsButton.connect('clicked', this._openSettings.bind(this));
       this._settingsButton.connect('enter-event', this._stopDrag.bind(this));
 
       this._settingsButtonTooltip = new UITooltip(this._settingsButton, {
@@ -267,45 +253,30 @@ var UIMainViewer = GObject.registerClass(
         reactive: true,
         style_class: 'pixzzle-ui-screenshot-button'
       });
-      const iconName = 'pixzzle-ui-swap-symbolic.svg';
-      this._swapIcon = new St.Icon({
-        gicon: Gio.icon_new_for_string(`${Me.path}/icons/${iconName}`),
-        rotation_angle_z: 0
-      });
-      this._swapButton = new UIButton({
-        style_class: 'pixzzle-ui-swap-button',
-        child: this._swapIcon,
-        x_expand: false,
-        reactive: true,
-        x_align: Clutter.ActorAlign.CENTER,
-        toggle_mode: true
-      });
-      this._swapIcon.set_pivot_point(0.5, 0.5);
+      {
+        const iconPath = 'icons/pixzzle-ui-swap-symbolic.svg';
+        this._swapIcon = new St.Icon({
+          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
+          rotation_angle_z: 0
+        });
+        this._swapButton = new UIButton({
+          style_class: 'pixzzle-ui-swap-button',
+          child: this._swapIcon,
+          x_expand: false,
+          reactive: true,
+          x_align: Clutter.ActorAlign.CENTER,
+          toggle_mode: true
+        });
+        this._swapIcon.set_pivot_point(0.5, 0.5);
+      }
       this._swapButton.connect('notify::checked', (widget) => {
-        const correction = this._heightDiff ? this._heightDiff : 0;
-        const extent = this._swapViewContainer.height - correction;
-        lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
-        this._animateSwap();
-        // folder hidden
-        if (widget.checked) {
-          this._crossSlideAnimate(
-            this._folderView,
-            this._thumbnailView,
-            extent,
-            correction
-          );
-        } else {
-          this._crossSlideAnimate(
-            this._thumbnailView,
-            this._folderView,
-            extent,
-            correction
-          );
+        if (!this._thumbnailView.loading) {
+          this._toggleSwap(widget);
         }
       });
 
       this._swapButtonTooltip = new UITooltip(this._swapButton, {
-        text: _('Toggle SideView'),
+        text: _('Show/Hide group'),
         style_class: 'pixzzle-ui-tooltip',
         visible: false
       });
@@ -330,10 +301,10 @@ var UIMainViewer = GObject.registerClass(
         height: 0
       });
       this._folderView.connect('swap-view', (widget, payload) => {
-        this._thumbnailView.reload(
-          payload,
-          () => (this._swapButton.checked = false)
-        );
+        this._thumbnailView.reload(payload, () => {
+          this._swapButton.checked = false;
+          this._groupingEnabled = !!payload.date;
+        });
       });
       this._folderView.connect('enter-event', this._stopDrag.bind(this));
 
@@ -342,21 +313,63 @@ var UIMainViewer = GObject.registerClass(
         x_expand: false,
         visible: true
       });
+
+      this._imageViewer = new UIImageRenderer(this);
+      this._dock = new Docking.DockedDash({ docker: this._imageViewer });
       this._thumbnailView.connect('replace', (_, shot) => {
         this._imageViewer._replace(shot);
         this._emptyView = this._thumbnailView._shotCount() == 0;
         if (this._emptyView) {
           this._swapButton.checked = true;
+          this._imageViewer.abortSnipSession();
         }
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
+      this._thumbnailView.connect('notify::loaded', () => {
+        if (!this._skipFirst) {
+          this._skipFirst = true;
+          return;
+        }
+
+        lg('[UIMainViewer::_init::_thumbnailView::notify::loaded]');
+        this._toggleSwap(this._swapButton);
+      });
 
       this._splitViewXContainer.add_child(this._bigViewContainer);
       this._splitViewXContainer.add_child(this._swapViewContainer);
       this._swapViewContainer.add_child(this._thumbnailView);
       this._swapViewContainer.add_child(this._folderView);
 
-      this._imageViewer = new UIImageRenderer(this);
+      {
+        const iconPath = 'icons/pixzzle-ui-collapse-symbolic.png';
+        const collapseIcon = new St.Icon({
+          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
+          rotation_angle_z: 0
+        });
+        this._meltButton = new UIButton({
+          style_class: 'pixzzle-ui-melt-button',
+          child: collapseIcon,
+          x_expand: false,
+          reactive: true,
+          x_align: Clutter.ActorAlign.CENTER,
+          visible: !this._isFlattened.get_value(),
+          pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+          x: 0,
+          y: 0
+        });
+        this.add_child(this._meltButton);
+      }
+
+      this._meltButton.connect('clicked', () => {
+        this._isFlattened.set_value(true);
+      });
+      this._isFlattened.connect('notify::changed', (me) => {
+        if (me.get_value()) {
+          this._folderView.flatten();
+        }
+        this._animateFlatten(me.get_value());
+      });
+
       this._imageViewer.connect('lock-axis', (_, axis) => {
         if (this._viewMode !== ViewMode.ADAPTIVE) {
           return;
@@ -400,6 +413,8 @@ var UIMainViewer = GObject.registerClass(
           this.height + yGap,
           this._activeMonitor.height
         );
+
+        this._updateDockPosition();
       });
       this._imageViewer.connect('clean-slate', () => {
         this._maxXSwing = INITIAL_WIDTH;
@@ -414,9 +429,15 @@ var UIMainViewer = GObject.registerClass(
         this._emptyView = true;
       });
       this._imageViewer.connect('enter-event', this._stopDrag.bind(this));
-      this._imageViewer.connect('switch-active', (widget, detail) => {
+      this._imageViewer.connect('switch-active', (me, detail) => {
         lg('[UIMainViewer::_init::_imageViewer::switch-active]');
         this._thumbnailView._switchActive(detail);
+      });
+      this._imageViewer.connect('new-shot', (me, shot) => {
+        this._folderView.addNewShot({ name: shot }).catch(logError);
+      });
+      this._imageViewer.connect('drag-action', () => {
+        this._dock._hide();
       });
       this._bigViewContainer.add_child(this._imageViewer);
 
@@ -429,12 +450,42 @@ var UIMainViewer = GObject.registerClass(
       Main.layoutManager.addChrome(this._snapIndicator);
 
       this._loadSettings();
+      this.add_child(this._dock);
+
       this.connect('notify::mapped', () => {
+        if (!this._dock.dash) {
+          this._dock.mount();
+          this._updateDockPosition();
+        }
+
+        if (!this.visible) {
+          this._thumbnailView.cancelSubscriptions();
+          return;
+        }
         this._animateSettings();
+
+        // Run only once for the lifetime of the
+        // application
+        if (!this._viewInitialized) {
+          this._folderView.flatten();
+          this._viewInitialized = true;
+        } else {
+          this._thumbnailView.activateSubscriptions();
+        }
       });
 
       this.connect('destroy', this._onDestroy.bind(this));
       this._reload_theme();
+    }
+
+    _updateDockPosition() {
+      const [w, h] = this._computeBigViewSize();
+      this._dock._resetPosition({
+        x: this.border_width,
+        y: this.border_width,
+        width: w,
+        height: h
+      });
     }
 
     _updateSnapIndicator(x, y, w, h) {
@@ -497,8 +548,8 @@ var UIMainViewer = GObject.registerClass(
       return this._border_width;
     }
 
-    _openOCRToolkit() {
-      this._imageViewer._openOCRToolkit();
+    _openSnipToolkit() {
+      this._imageViewer._openSnipToolkit();
     }
 
     _computeBigViewSize() {
@@ -550,6 +601,139 @@ var UIMainViewer = GObject.registerClass(
           this._shutter._showUI();
         }
       });
+    }
+
+    _moveFloatingButton(index) {
+      /*
+       * Use `AlignConstraint` with factor
+       * set to `1` to position the button
+       * in the bottom-right corner. This
+       * is how to simulate fixed
+       * positioning. The `x` and `y`
+       * property of the button shifts
+       * it to the desired position.
+       */
+      const meltButtonInfo = [
+        {
+          /*
+           * Play with the values a bit to get a good
+           * initial position
+           */
+          x: -55,
+          y: -80,
+          constraints: [
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.X_AXIS,
+              pivot_point: new Graphene.Point({ x: 0.5, y: 0 }),
+              factor: 1
+            }),
+
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.Y_AXIS,
+              pivot_point: new Graphene.Point({ x: 0, y: 1 }),
+              factor: 1
+            })
+          ]
+        },
+        {
+          x: 20,
+          y: -80,
+          constraints: [
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.X_AXIS,
+              pivot_point: new Graphene.Point({ x: 0, y: 0 }),
+              factor: 0
+            }),
+
+            new Clutter.AlignConstraint({
+              source: this,
+              align_axis: Clutter.AlignAxis.Y_AXIS,
+              pivot_point: new Graphene.Point({ x: 0, y: 1 }),
+              factor: 1
+            })
+          ]
+        }
+      ];
+      const match = meltButtonInfo[index];
+      this._meltButton.clear_constraints();
+      this._meltButton.set_position(match.x, match.y);
+      for (const constraint of match.constraints) {
+        this._meltButton.add_constraint(constraint);
+      }
+    }
+
+    _animateFlatten(state) {
+      if (state) {
+        this._meltButton.ease({
+          scale_x: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD
+        });
+        this._meltButton.ease({
+          scale_y: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => {
+            this._meltButton.hide();
+          }
+        });
+      } else {
+        this._meltButton.show();
+        this._meltButton.ease({
+          scale_x: 1,
+          duration: 400,
+          mode: Clutter.AnimationMode.EASE_IN_OUT_ELASTIC
+        });
+        this._meltButton.ease({
+          scale_y: 1,
+          duration: 400,
+          mode: Clutter.AnimationMode.EASE_IN_OUT_ELASTIC
+        });
+      }
+    }
+
+    _toggleSwap(widget) {
+      const correction = this._heightDiff ? this._heightDiff : 0;
+      const extent = this._swapViewContainer.height - correction;
+      lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
+      this._animateSwap();
+      // folder hidden
+      if (widget.checked) {
+        this._crossSlideAnimate(
+          this._folderView,
+          this._thumbnailView,
+          extent,
+          correction
+        );
+      } else {
+        this._crossSlideAnimate(
+          this._thumbnailView,
+          this._folderView,
+          extent,
+          correction
+        );
+      }
+
+      if (!this._meltButton.visible) {
+        this._isFlattened.set_value(false);
+      }
+
+      /*
+       * When the MainViewer becomes visible,
+       * we show a list of all the shots
+       * taken. In this view mode, no `date`
+       * has been selected. We use this
+       * `_groupingEnabled` to determine if
+       * we are in this mode. We should
+       * keep hiding the melt button if
+       * we are back in this view mode.
+       */
+      if (!this._groupingEnabled) {
+        this._animateFlatten(!this._swapButton.checked);
+      }
     }
 
     _crossSlideAnimate(one, other, extent, correction) {
@@ -682,6 +866,8 @@ var UIMainViewer = GObject.registerClass(
         );
       }
 
+      this._moveFloatingButton(viewIndex);
+
       this._tilingDisabled = this._settings.get_boolean(
         Prefs.Fields.DISABLE_TILE_MODE
       );
@@ -691,7 +877,7 @@ var UIMainViewer = GObject.registerClass(
       function getColorSetting(id, settings) {
         let colors = settings.get_strv(id);
         const color = colors
-          .map((c, i) => (i < 3 ? c * FULLY_OPAQUE : c))
+          .map((c, i) => (i < 3 ? c * Constants.FULLY_OPAQUE : c))
           .join(',');
         return 'rgba(' + color + ')';
       }
@@ -734,11 +920,6 @@ var UIMainViewer = GObject.registerClass(
       SETTING_DISABLE_TILE_MODE = this._settings.get_boolean(
         Prefs.Fields.DISABLE_TILE_MODE
       );
-      SETTING_NATURAL_PANNING = this._settings.get_boolean(
-        Prefs.Fields.NATURAL_PANNING
-      );
-
-      SETTING_OCR_API = this._settings.get_string(Prefs.Fields.OCR_API);
     }
 
     _bindShortcuts() {
@@ -817,9 +998,9 @@ var UIMainViewer = GObject.registerClass(
         this._shutter = null;
       }
 
-      if (this._modalWatcher) {
-        this._modalWatcher.remove();
-        this._modalWatcher = null;
+      if (this._dock) {
+        this._dock.destroy();
+        this._dock = null;
       }
 
       Main.layoutManager.removeChrome(this._snapIndicator);
@@ -836,7 +1017,7 @@ var UIMainViewer = GObject.registerClass(
           this.opacity = 0;
           this.show();
           this.ease({
-            opacity: FULLY_OPAQUE,
+            opacity: Constants.FULLY_OPAQUE,
             duration: 150,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD
           });
@@ -856,31 +1037,27 @@ var UIMainViewer = GObject.registerClass(
         return;
       }
 
-      new Timer(this).add(
-        300,
-        function () {
-          const newOpacity = this._isActive ? FULLY_OPAQUE : 0;
-          this.opacity = newOpacity;
-          if (!this._isActive) {
-            this.show();
-          } else {
-            this._closeSettings();
+      const newOpacity = this._isActive ? Constants.FULLY_OPAQUE : 0;
+      this.opacity = newOpacity;
+      if (!this._isActive) {
+        this.show();
+        this._dock._show();
+      } else {
+        this._closeSettings();
+      }
+      this.ease({
+        opacity: Constants.FULLY_OPAQUE - newOpacity,
+        duration: 150,
+        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        onComplete: () => {
+          if (this._isActive) {
+            this.hide();
+            this._dock._hide();
           }
-          this.ease({
-            opacity: FULLY_OPAQUE - newOpacity,
-            duration: 150,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => {
-              this._isActive && this.hide();
-              this._isActive = !this._isActive;
-            }
-          });
-
+          this._isActive = !this._isActive;
           lg('[UIMainViewer::_toggleUI]');
-          return GLib.SOURCE_REMOVE;
-        }.bind(this),
-        'UIMainViewer._toggleUI'
-      );
+        }
+      });
     }
 
     reset() {
@@ -1019,6 +1196,7 @@ var UIMainViewer = GObject.registerClass(
 
     _updateCursor(x, y) {
       const cursor = this._computeCursorType(x, y);
+      lg('[UIMainViewer::_updateCursor]', cursor);
       global.display.set_cursor(cursor);
     }
 
@@ -1262,6 +1440,7 @@ var UIMainViewer = GObject.registerClass(
       }
 
       this._updateSize();
+      this._updateDockPosition();
       if (this._dragCursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
         this._imageViewer._redraw(dx, dy);
       }
@@ -1350,976 +1529,6 @@ var UIMainViewer = GObject.registerClass(
   }
 );
 
-const ViewOrientation = Object.freeze({ TOP: 0, RIGHT: 1, BOTTOM: 2, LEFT: 3 });
-const Directivity = Object.freeze({ NEXT: 1, PREV: -1 });
-const N_AXIS = 4;
-
-const UIImageRenderer = GObject.registerClass(
-  {
-    Signals: {
-      'lock-axis': { param_types: [Object.prototype] },
-      'clean-slate': {},
-      'ocr-cancelled': {},
-      'switch-active': { param_types: [Object.prototype] }
-    }
-  },
-  class UIImageRenderer extends St.Widget {
-    _init(topParent, params) {
-      super._init({
-        ...params,
-        reactive: true,
-        can_focus: true,
-        layout_manager: new Clutter.BinLayout()
-      });
-
-      this._topParent = topParent;
-      this._canvas = new Clutter.Canvas();
-      this.set_content(this._canvas);
-      this._xpos = 0;
-      this._ypos = 0;
-      this._orientationLU = new Array(N_AXIS);
-      this._orientation = ViewOrientation.TOP;
-      this._canvas.connect('draw', (canvas, context) => {
-        if (this._pixbuf && this._filename) {
-          const [pixWidth, pixHeight] = [
-            this._pixbuf.get_width(),
-            this._pixbuf.get_height()
-          ];
-
-          const [maxWidth, maxHeight] = this._topParent._computeBigViewSize();
-          const [effectiveWidth, effectiveHeight] = [
-            Math.min(pixWidth - this._xpos, maxWidth),
-            Math.min(pixHeight - this._ypos, maxHeight)
-          ];
-          const pixbuf = this._pixbuf.new_subpixbuf(
-            this._xpos,
-            this._ypos,
-            effectiveWidth,
-            effectiveHeight
-          );
-          if (pixbuf === null) {
-            lg('[UIImageRenderer::_init::_draw]', 'pixbuf = (null)');
-            return;
-          }
-          this._visibleRegionPixbuf = pixbuf;
-
-          context.save();
-          context.setOperator(Cairo.Operator.CLEAR);
-          context.paint();
-          context.restore();
-          cairo_set_source_pixbuf(
-            context,
-            pixbuf,
-            (maxWidth - effectiveWidth) / 2,
-            (maxHeight - effectiveHeight) / 2
-          );
-          context.paint();
-
-          /*
-           * For a new screenshot, this._ocrScanOnEntry
-           * flag indicates that we want to perform
-           * ocr scan immediately we screenshot the
-           * image.
-           */
-          if (this._ocrScanOnEntry) {
-            this._ocrScanOnEntry = false;
-            this._openOCRToolkit();
-            this._ocrIndicator.x = (maxWidth - pixbuf.width) / 2;
-            this._ocrIndicator.y = (maxHeight - pixbuf.height) / 2;
-            this._ocrIndicator.width = this._pixbuf.width;
-            this._ocrIndicator.height = this._pixbuf.height;
-            this._doOCR(this._pixbuf);
-          }
-        } else if (this._filename) {
-          context.save();
-          context.setOperator(Cairo.Operator.CLEAR);
-          context.paint();
-          this._filename = null;
-        }
-      });
-      this._ocrIndicator = new St.Widget({
-        style_class: 'pixzzle-ui-ocr-indicator'
-      });
-      this.add_child(this._ocrIndicator);
-
-      this._ocrText = new UIOcrTip(this._ocrIndicator, this, {
-        style_class: 'pixzzle-ui-ocrtip',
-        x_align: St.Align.START,
-        visible: false,
-        reactive: true
-      });
-      this._ocrText.clutter_text.set_editable(false);
-      this._ocrText.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
-      this._topParent.add_child(this._ocrText);
-    }
-
-    _redraw(deltaX, deltaY) {
-      if (this._filename) {
-        const [width, height] = this._topParent._computeBigViewSize();
-        this._render(deltaX, deltaY, width, height);
-      } else {
-        this._isPanningEnabled = false;
-        this._closeOCRToolkit();
-      }
-    }
-
-    _replace(shot) {
-      const newFile = shot.name;
-      this._shotWidget = shot.widget;
-      this._ocrScanOnEntry = shot.ocr;
-      lg('[UIImageRenderer::_replace]', 'newFile:', newFile);
-      if (newFile === null) {
-        this._unload();
-        this.set_size(0, 0);
-        this._reOrient(-this._orientation, true /* flush */);
-        this.emit('clean-slate');
-        this._isPanningEnabled = false;
-      } else if (newFile !== this._filename) {
-        /*
-         * Since we support rotation, create
-         * a pixel buffer with a size of the
-         * maximum dimension that can be achieved
-         * through rotation. Any time we want
-         * to render, we will rotate the mouse
-         * to the current angle.
-         */
-        const pixbuf = GdkPixbuf.Pixbuf.new_from_file(newFile);
-        if (pixbuf != null) {
-          this._abortOCRSession();
-          this._reOrient(-this._orientation, true /* flush */);
-          this._pixbuf = pixbuf;
-          this._filename = newFile;
-          this._reload();
-        }
-      }
-    }
-
-    _unload() {
-      this._pixbuf = null;
-      this._canvas.invalidate();
-    }
-
-    _reload() {
-      const [width, height] = this._topParent._computeBigViewSize();
-      const [pixWidth, pixHeight] = [
-        this._pixbuf.get_width(),
-        this._pixbuf.get_height()
-      ];
-
-      this.emit('lock-axis', {
-        X_AXIS: pixWidth - width,
-        Y_AXIS: pixHeight - height
-      });
-      this._redraw(0, 0);
-    }
-
-    _render(deltaX, deltaY, maxWidth, maxHeight) {
-      const [pixWidth, pixHeight] = [
-        this._pixbuf.get_width(),
-        this._pixbuf.get_height()
-      ];
-      this._isPanningEnabled = pixWidth > maxWidth || pixHeight > maxHeight;
-      this._updateToolkits();
-      const lockedAxis = {
-        X_AXIS: pixWidth <= maxWidth,
-        Y_AXIS: pixHeight <= maxHeight
-      };
-      if (!this._isPanningEnabled) {
-        this._xpos = this._ypos = 0;
-      } else {
-        /*
-         * If the panning area is not yet
-         * at the edge, move the area
-         * to fill up the space created
-         * from the drag.
-         * Clip the drag delta that is added
-         * so that we don't exceed the
-         * maximum size of the image.
-         */
-        if (!lockedAxis.X_AXIS && this._xpos + maxWidth >= pixWidth) {
-          this._xpos += Math.max(
-            -Math.abs(deltaX),
-            pixWidth - this._xpos - maxWidth
-          );
-        }
-
-        if (!lockedAxis.Y_AXIS && this._ypos + maxHeight >= pixHeight) {
-          this._ypos += Math.max(
-            -Math.abs(deltaY),
-            pixHeight - this._ypos - maxHeight
-          );
-        }
-      }
-
-      this._canvas.invalidate();
-      this._canvas.set_size(maxWidth, maxHeight);
-      this.set_size(maxWidth, maxHeight);
-    }
-
-    /*
-     * Keep track of panning state at the current
-     * orientation and restore on the next rotation.
-     */
-    _reOrient(by, flush) {
-      if (flush) {
-        this._orientationLU.fill(null);
-      } else {
-        this._orientationLU[this._orientation] = {
-          x: this._xpos,
-          y: this._ypos
-        };
-      }
-
-      const next = (this._orientation + by) % N_AXIS;
-      this._orientation = next;
-      const pos = this._orientationLU[next];
-
-      this._xpos = pos?.x ?? 0;
-      this._ypos = pos?.y ?? 0;
-    }
-
-    _copyTextToClipboard(text, message) {
-      const clipboard = St.Clipboard.get_default();
-      clipboard.set_text(St.ClipboardType.CLIPBOARD, text);
-
-      // Show a notification.
-      const source = new MessageTray.Source(
-        _('Pixzzle'),
-        'screenshot-recorded-symbolic'
-      );
-      const notification = new MessageTray.Notification(
-        source,
-        _(`${message}`),
-        _('Text is available in your clipboard'),
-        {}
-      );
-      notification.setTransient(true);
-      Main.messageTray.add(source);
-      source.showNotification(notification);
-    }
-
-    _copyImageToClipboard(pixbuf, message) {
-      if (this._clipboardCopyCancellable) {
-        this._clipboardCopyCancellable.cancel();
-      }
-
-      this._clipboardCopyCancellable = new Gio.Cancellable();
-      const stream = Gio.MemoryOutputStream.new_resizable();
-      pixbuf.save_to_streamv_async(
-        stream,
-        'png',
-        [],
-        [],
-        this._clipboardCopyCancellable,
-        (pixbuf, task) => {
-          if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
-            return;
-          }
-          stream.close(null);
-          const clipboard = St.Clipboard.get_default();
-          const bytes = stream.steal_as_bytes();
-          clipboard.set_content(St.ClipboardType.CLIPBOARD, 'image/png', bytes);
-          lg('[UIImageRenderer::_copyToClipboard]');
-
-          const time = GLib.DateTime.new_now_local();
-          const pixels = pixbuf.read_pixel_bytes();
-          const content = St.ImageContent.new_with_preferred_size(
-            pixbuf.width,
-            pixbuf.height
-          );
-          content.set_bytes(
-            pixels,
-            Cogl.PixelFormat.RGBA_8888,
-            pixbuf.width,
-            pixbuf.height,
-            pixbuf.rowstride
-          );
-
-          // Show a notification.
-          const source = new MessageTray.Source(
-            _('Pixzzle'),
-            'screenshot-recorded-symbolic'
-          );
-          const notification = new MessageTray.Notification(
-            source,
-            _(`${message}`),
-            _('You can paste the image from the clipboard.'),
-            { datetime: time, gicon: content }
-          );
-          notification.setTransient(true);
-          Main.messageTray.add(source);
-          source.showNotification(notification);
-        }
-      );
-    }
-
-    _updateToolkits() {
-      this._closeOCRToolkit();
-    }
-
-    _closeOCRToolkit() {
-      this._isInOCRSession = false;
-      this._ocrIndicator.hide();
-      this._ocrText.close();
-    }
-
-    _openOCRToolkit() {
-      if (this._isPanningEnabled) {
-        this._isPanningEnabled = !this._isPanningEnabled;
-      }
-
-      // Perform ocr
-      lg('[UIImageRenderer::_onKeyPress]', 'starting ocr');
-      this._isInOCRSession = !this._isInOCRSession;
-      if (this._isInOCRSession) {
-        this._ocrIndicator.show();
-      } else {
-        this._ocrIndicator.hide();
-        this._ocrText.close();
-      }
-      this._ocrIndicator.set_size(0, 0);
-      this._updateCursor();
-    }
-
-    _processOCRCapture() {
-      const vw = this._visibleRegionPixbuf.width;
-      const vh = this._visibleRegionPixbuf.height;
-      const w = this._canvas.width;
-      const h = this._canvas.height;
-      const oLeft = this._ocrIndicator.x;
-      const oTop = this._ocrIndicator.y;
-      const oRight = oLeft + this._ocrIndicator.width - 1;
-      const oBottom = oTop + this._ocrIndicator.height - 1;
-      const [minX, minY] = [(w - vw) / 2, (h - vh) / 2];
-      const [maxX, maxY] = [(w + vw) / 2, (h + vh) / 2];
-      let [startX, startY] = [minX, minY];
-      let [endX, endY] = [maxX, maxY];
-
-      if (oLeft >= startX) {
-        startX = oLeft;
-      }
-      if (oTop >= startY) {
-        startY = oTop;
-      }
-      if (oRight <= endX) {
-        endX = oRight;
-      }
-      if (oBottom <= endY) {
-        endY = oBottom;
-      }
-
-      if (
-        startX >= minX &&
-        startX <= maxX &&
-        startY >= minY &&
-        startY <= maxY &&
-        endX >= startX &&
-        endX <= maxX &&
-        endY >= startY &&
-        endY <= maxY
-      ) {
-        const width = endX - startX + 1;
-        const height = endY - startY + 1;
-        if (width < 10 && height < 10) {
-          lg('[UIImageRenderer::_processOCRCapture]', width, height);
-          this._ocrIndicator.set_size(0, 0);
-          return;
-        }
-
-        this._ocrIndicator.set_position(startX, startY);
-        this._ocrIndicator.set_size(width, height);
-
-        startX -= minX;
-        startY -= minY;
-        endX -= minX;
-        endY -= minY;
-
-        const pixbuf = this._visibleRegionPixbuf.new_subpixbuf(
-          Math.max(startX, 0),
-          Math.max(startY, 0),
-          // Do this to ensure that we don't exceed the size limit of
-          // the image.
-          Math.min(endX - startX + 1, vw - startX),
-          Math.min(endY - startY + 1, vh - startY)
-        );
-        if (pixbuf === null) {
-          lg('[UIImageRenderer::_processOCRCapture]', 'pixbuf == (null)');
-          return;
-        }
-        this._doOCR(pixbuf);
-      } else {
-        this._ocrIndicator.set_size(0, 0);
-      }
-    }
-
-    _doOCR(pixbuf) {
-      if (this._ocrCancellable) {
-        this._ocrCancellable.cancel();
-        this._ocrCancellable = null;
-        this._ocrResultAvailable = false;
-      }
-
-      this._ocrText.open('Loading...', true /* instantly */);
-
-      this._session = new Soup.Session({ ssl_strict: false });
-      const stream = Gio.MemoryOutputStream.new_resizable();
-
-      this._ocrCancellable = new Gio.Cancellable();
-      pixbuf.save_to_streamv_async(
-        stream,
-        'png',
-        [],
-        [],
-        this._ocrCancellable,
-        function (pixbuf, task) {
-          if (this._ocrCancellable.is_cancelled()) {
-            return;
-          }
-          if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
-            return;
-          }
-          stream.close(null);
-
-          const bytes = stream.steal_as_bytes();
-          const multipart = new Soup.Multipart(Soup.FORM_MIME_TYPE_MULTIPART);
-          multipart.append_form_string(
-            'base64Image',
-            'data:image/png;base64,' + GLib.base64_encode(bytes.get_data())
-          );
-          multipart.append_form_string('apikey', SETTING_OCR_API);
-          multipart.append_form_string('OCREngine', '2');
-
-          const message = Soup.form_request_new_from_multipart(
-            OCR_URL,
-            multipart
-          );
-
-          this._session.queue_message(
-            message,
-            function (result, task) {
-              const status = message.status_code;
-              if (status == Soup.Status.CANCELLED) {
-                return;
-              }
-              if (status !== Soup.Status.OK) {
-                lg(
-                  '[UIImageRenderer::_processOCRCapture]',
-                  'Error occurred during OCR processing:',
-                  status,
-                  message.response_body.length,
-                  Soup.Status.get_phrase(message.status_code)
-                );
-                this._ocrResultAvailable = false;
-                if (
-                  status >= Soup.Status.CANT_RESOLVE &&
-                  status <= Soup.Status.CANT_CONNECT_PROXY
-                ) {
-                  this._ocrText.error(
-                    'Unable to connect.\n' +
-                      'Check your internet connection\n' +
-                      'and try again.'
-                  );
-                } else if (status === Soup.Status.FORBIDDEN) {
-                  this._ocrText.error(
-                    'Your API KEY is invalid.\n' +
-                      'Visit https://ocr-space.com\n' +
-                      'to renew your KEY'
-                  );
-                } else {
-                  this._ocrText.error(
-                    Soup.Status.get_phrase(message.status_code)
-                  );
-                }
-
-                return;
-              }
-
-              const data = message.response_body.data;
-              const obj = JSON.parse(
-                message.response_body.length === 0 ? '{}' : data
-              );
-              const extract = obj?.ParsedResults?.[0]?.ParsedText?.trim() ?? '';
-              lg(
-                '[UIImageRenderer::_processOCRCapture]',
-                'data:',
-                data,
-                'extract:',
-                extract,
-                'length:',
-                extract?.length ?? 0
-              );
-              if (extract !== null && extract.length !== 0) {
-                this._ocrText.open(extract);
-              } else {
-                this._ocrText.error('Unable to extract information');
-              }
-              this._ocrResultAvailable = true;
-            }.bind(this)
-          );
-        }.bind(this)
-      );
-    }
-
-    _abortOCRSession() {
-      this._ocrIndicator.hide();
-      this._ocrText.close();
-      this._session?.abort();
-      this.emit('ocr-cancelled');
-    }
-
-    _updateOCRIndicator() {
-      let leftX = Math.min(this._originX, this._dragX);
-      let topY = Math.min(this._originY, this._dragY);
-      const rightX = Math.max(this._originX, this._dragX);
-      const bottomY = Math.max(this._originY, this._dragY);
-      const width = rightX - leftX + 1;
-      const height = bottomY - topY + 1;
-      let overshootX = 0,
-        overshootY = 0;
-
-      leftX = leftX - this._topParent.x - this._topParent.border_width;
-      topY = topY - this._topParent.y - this._topParent.border_width;
-      if (leftX < 0) {
-        overshootX = leftX;
-        leftX = 0;
-      }
-      if (topY < 0) {
-        overshootY = topY;
-        topY = 0;
-      }
-
-      this._ocrIndicator.set_position(leftX, topY);
-      this._ocrIndicator.set_size(width + overshootX, height + overshootY);
-    }
-
-    _updateCursor() {
-      global.display.set_cursor(
-        this._isInOCRSession ? Meta.Cursor.CROSSHAIR : Meta.Cursor.DEFAULT
-      );
-    }
-
-    get ocrReady() {
-      return this._ocrResultAvailable === true;
-    }
-
-    _onKeyPress(event) {
-      const symbol = event.keyval;
-      if (symbol === Clutter.KEY_Escape) {
-        this._abortOCRSession();
-        return Clutter.EVENT_STOP;
-      } else if (symbol === Clutter.KEY_Delete) {
-        this._shotWidget?.emit('delete');
-        return Clutter.EVENT_STOP;
-      } else if (symbol === Clutter.KEY_Left) {
-        this.emit('switch-active', {
-          current: this._filename,
-          direction: Directivity.PREV
-        });
-        return Clutter.EVENT_STOP;
-      } else if (symbol === Clutter.KEY_Right) {
-        this.emit('switch-active', {
-          current: this._filename,
-          direction: Directivity.NEXT
-        });
-        return Clutter.EVENT_STOP;
-      } else if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
-        if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
-          this._pixbuf = this._pixbuf.rotate_simple(
-            GdkPixbuf.PixbufRotation.CLOCKWISE
-          );
-          this._reOrient(1);
-          this._reload();
-        } else if (symbol === Clutter.KEY_l || symbol === Clutter.KEY_L) {
-          this._pixbuf = this._pixbuf.rotate_simple(
-            GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE
-          );
-          this._reOrient(N_AXIS - 1);
-          this._reload();
-        } else if (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C) {
-          if (event.modifier_state & Clutter.ModifierType.SHIFT_MASK) {
-            this._copyImageToClipboard(
-              this._visibleRegionPixbuf,
-              'Viewport yanked!'
-            );
-          } else if (!this._isInOCRSession) {
-            this._copyImageToClipboard(this._pixbuf, 'Image yanked!');
-          } else {
-            this._copyTextToClipboard(this._ocrText.get_text(), 'Text copied');
-          }
-        }
-      } else if (symbol === Clutter.KEY_o || symbol === Clutter.KEY_O) {
-        this._openOCRToolkit();
-      }
-
-      return Clutter.EVENT_PROPAGATE;
-    }
-
-    _onPress(event, button, sequence) {
-      if (this._dragButton) {
-        return Clutter.EVENT_PROPAGATE;
-      }
-
-      this._dragButton = button;
-      this._dragGrab = global.stage.grab(this);
-      [this._dragX, this._dragY] = [event.x, event.y];
-      [this._originX, this._originY] = [event.x, event.y];
-      if (this._isInOCRSession) {
-        this._ocrText.close();
-        this._ocrIndicator.show();
-        global.display.set_cursor(Meta.Cursor.CROSSHAIR);
-      } else {
-        global.display.set_cursor(Meta.Cursor.DND_IN_DRAG);
-      }
-
-      return Clutter.EVENT_STOP;
-    }
-
-    _onRelease(event, button, sequence) {
-      if (
-        this._dragButton !== button ||
-        this._dragSequence?.get_slot() !== sequence?.get_slot()
-      )
-        return Clutter.EVENT_PROPAGATE;
-
-      lg('[UIImageRenderer::_onRelease]');
-      this._stopDrag();
-      if (this._isInOCRSession) {
-        this._processOCRCapture();
-      }
-
-      const [x, y] = [event.x, event.y];
-      global.display.set_cursor(Meta.Cursor.DEFAULT);
-
-      return Clutter.EVENT_STOP;
-    }
-
-    _stopDrag() {
-      if (!this._dragButton) return;
-
-      this._dragButton = 0;
-      this._dragGrab?.dismiss();
-      this._dragGrab = null;
-      this._dragSequence = null;
-    }
-
-    _onMotion(event, sequence) {
-      const [x, y] = [event.x, event.y];
-      if (!this._dragButton) {
-        this._updateCursor();
-        return Clutter.EVENT_STOP;
-      }
-
-      let dx = Math.round(x - this._dragX);
-      let dy = Math.round(y - this._dragY);
-
-      const [maxWidth, maxHeight] = [
-        this._pixbuf.get_width(),
-        this._pixbuf.get_height()
-      ];
-
-      if (!this._isInOCRSession) {
-        const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
-        if (maxWidth > this.width) {
-          this._xpos += panDirection * dx;
-          if (this._xpos < 0) {
-            const overshootX = -this._xpos;
-            this._xpos += overshootX;
-            dx -= overshootX;
-          }
-          if (this._xpos + this.width - 1 >= maxWidth) {
-            const overshootX = maxWidth - (this._xpos + this.width - 1);
-            this._xpos += overshootX;
-            dx -= overshootX;
-          }
-        } else {
-          dx = 0;
-        }
-
-        if (maxHeight > this.height) {
-          this._ypos += panDirection * dy;
-          if (this._ypos < 0) {
-            const overshootY = -this._ypos;
-            this._ypos += overshootY;
-            dy -= overshootY;
-          }
-          if (this._ypos + this.height - 1 >= maxHeight) {
-            const overshootY = maxHeight - (this._ypos + this.height - 1);
-            this._ypos += overshootY;
-            dy -= overshootY;
-          }
-        } else {
-          dy = 0;
-        }
-        this._canvas.invalidate();
-      } else {
-        this._updateOCRIndicator();
-      }
-
-      this._dragX += dx;
-      this._dragY += dy;
-      return Clutter.EVENT_PROPAGATE;
-    }
-
-    vfunc_button_press_event(event) {
-      const button = event.button;
-      if (
-        button === Clutter.BUTTON_PRIMARY ||
-        button === Clutter.BUTTON_SECONDARY
-      )
-        return this._onPress(event, button, null);
-
-      return Clutter.EVENT_PROPAGATE;
-    }
-
-    vfunc_button_release_event(event) {
-      const button = event.button;
-      if (
-        button === Clutter.BUTTON_PRIMARY ||
-        button === Clutter.BUTTON_SECONDARY
-      )
-        return this._onRelease(event, button, null);
-
-      return Clutter.EVENT_PROPAGATE;
-    }
-
-    vfunc_motion_event(event) {
-      return this._onMotion(event, null);
-    }
-
-    vfunc_touch_event(event) {
-      const eventType = event.type;
-      if (eventType === Clutter.EventType.TOUCH_BEGIN)
-        return this._onPress(event, 'touch', event.get_event_sequence());
-      else if (eventType === Clutter.EventType.TOUCH_END)
-        return this._onRelease(event, 'touch', event.get_event_sequence());
-      else if (eventType === Clutter.EventType.TOUCH_UPDATE)
-        return this._onMotion(event, event.get_event_sequence());
-
-      return Clutter.EVENT_PROPAGATE;
-    }
-
-    vfunc_leave_event(event) {
-      lg('[UIImageRenderer::vfunc_leave_event]');
-      if (this._dragButton) {
-        return this._onMotion(event, null);
-      } else {
-        global.display.set_cursor(Meta.Cursor.DEFAULT);
-      }
-
-      return super.vfunc_leave_event(event);
-    }
-  }
-);
-
-const UIOcrTip = GObject.registerClass(
-  class UIOcrTip extends St.Label {
-    _init(widget, container, params) {
-      super._init(params);
-
-      this._widget = widget;
-      this._container = container;
-      this._timeoutId = null;
-
-      this.connect('destroy', this._onDestroy.bind(this));
-      this._container.connect(
-        'ocr-cancelled',
-        function () {
-          this._openCancelled = true;
-          this.close();
-        }.bind(this)
-      );
-    }
-
-    open(message, instantly = false) {
-      this.remove_style_class_name('pixzzle-ui-ocrtip-error');
-      if (this._timeoutId) {
-        this.close(true /* instantly */);
-      }
-
-      this._open(
-        function () {
-          const x = this._widget.x;
-          const y = this._widget.y;
-          this.show();
-          this.set_text(message);
-          this.set_position(x, y);
-        }.bind(this),
-        instantly
-      );
-    }
-
-    _open(action, instantly = false) {
-      if (instantly) {
-        this.set_opacity(0);
-        action();
-        this.ease({
-          opacity: FULLY_OPAQUE,
-          duration: 150,
-          mode: Clutter.AnimationMode.EASE_OUT_QUAD
-        });
-        this._openCancelled = false;
-        return;
-      }
-
-      this._timeoutId = GLib.timeout_add(
-        GLib.PRIORITY_DEFAULT,
-        150,
-        function () {
-          lg('[OcrTip::_open::timeout_add()]', this._openCancelled);
-          if (this._openCancelled) {
-            this._openCancelled = false;
-            this.close(true /* instantly */);
-          } else {
-            this.set_opacity(0);
-            this.show();
-            action();
-            this.ease({
-              opacity: FULLY_OPAQUE,
-              duration: 150,
-              mode: Clutter.AnimationMode.EASE_OUT_QUAD
-            });
-          }
-          this._timeoutId = null;
-          return GLib.SOURCE_REMOVE;
-        }.bind(this)
-      );
-      GLib.Source.set_name_by_id(this._timeoutId, '[pixzzle] ocrtip._open');
-    }
-
-    close(instantly = false) {
-      if (this._timeoutId) {
-        GLib.source_remove(this._timeoutId);
-        this._timeoutId = null;
-      }
-
-      if (!this.visible) return;
-
-      this.remove_all_transitions();
-      if (instantly) {
-        this.hide();
-        return;
-      }
-
-      this.ease({
-        opacity: 0,
-        duration: 100,
-        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        onComplete: () => this.hide()
-      });
-    }
-
-    error(message) {
-      lg('[OcrTip::error]', 'error:', message, this._timeoutId);
-      if (this._timeoutId) {
-        this.close(true /* instantly */);
-      }
-
-      this._open(
-        function () {
-          lg('[OcrTip::error::_open::()]');
-          const style_classes = this.get_style_class_name()?.split(' ') ?? [];
-          const rem_style_classes = style_classes.filter(
-            (style_class) => style_class !== 'pixzzle-ui-ocrtip-error'
-          );
-
-          rem_style_classes.push('pixzzle-ui-ocrtip-error');
-          this.set_style_class_name(rem_style_classes.join(' '));
-          this.set_text(message);
-          this._vibrateWithDamping();
-        }.bind(this)
-      );
-    }
-
-    _vibrateWithDamping() {
-      let originalPosition = this._widget.x - this.width / 2;
-      let counter = 0;
-      // Change this value to adjust the rate of damping
-      let dampingFactor = 1;
-      function frame() {
-        this.__ocrTipTimeoutId = null;
-        counter += 0.9;
-        // This value determines how quickly the vibration dampens
-        dampingFactor *= 0.86;
-        const offset = Math.sin(counter) * 80 * dampingFactor;
-        // The amplitude of the vibration decreases over time
-        this.set_position(originalPosition + offset, this._widget.y);
-
-        if (dampingFactor < 0.01) {
-          // When the vibration is small enough, stop the animation
-          // and reset the position
-          this.set_position(originalPosition, this._widget.y);
-        } else {
-          this.__ocrTipTimeoutId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT,
-            1000 / 60,
-            frame.bind(this)
-          );
-          GLib.Source.set_name_by_id(
-            this.__ocrTipTimeoutId,
-            '[pixzzle-ui] OcrTip.error.vibrateWithDamping.frame'
-          );
-        }
-
-        return GLib.SOURCE_REMOVE;
-      }
-
-      frame.bind(this)();
-    }
-
-    _onDestroy() {
-      if (this._timeoutId) {
-        GLib.Source.remove(this._timeoutId);
-        this._timeoutId = null;
-      }
-
-      if (this.__ocrTipTimeoutId) {
-        GLib.Source.remove(this.__ocrTipTimeoutId);
-        this.__ocrTipTimeoutId = null;
-      }
-    }
-
-    _onMotion(event) {
-      return Clutter.EVENT_STOP;
-    }
-
-    vfunc_allocate(box) {
-      const [width, height] = [box.get_width(), box.get_height()];
-      box.set_size(clamp(width, 300), clamp(height, 200));
-      this.set_allocation(box);
-
-      super.vfunc_allocate(box);
-
-      function clamp(value, max) {
-        return value > max ? max : value;
-      }
-    }
-
-    vfunc_button_press_event(event) {
-      const button = event.button;
-      if (
-        button === Clutter.BUTTON_PRIMARY ||
-        button === Clutter.BUTTON_SECONDARY
-      ) {
-        if (this._container.ocrReady) {
-          this._container._copyTextToClipboard(this.get_text(), 'Text copied');
-        }
-        return Clutter.EVENT_STOP;
-      }
-
-      return Clutter.EVENT_PROPAGATE;
-    }
-
-    vfunc_motion_event(event) {
-      return this._onMotion(event, null);
-    }
-
-    vfunc_enter_event(event) {
-      lg('[Tooltip::vfunc_enter_event]');
-      return super.vfunc_enter_event(event);
-    }
-  }
-);
-
 const UISideViewBase = GObject.registerClass(
   class UISideViewBase extends St.BoxLayout {
     _init(params) {
@@ -2341,9 +1550,32 @@ const UISideViewBase = GObject.registerClass(
           orientation: Clutter.Orientation.VERTICAL,
           spacing: 6
         }),
-        y_align: Clutter.ActorAlign.START
+        y_align: Clutter.ActorAlign.START,
+        y_expand: true
       });
       this._scrollView.add_actor(this._viewBox);
+    }
+  }
+);
+
+const DNDTracker = GObject.registerClass(
+  class DNDTracker extends GObject.Object {
+    _init(host, cb) {
+      super._init();
+
+      this._isEnabled = false;
+      this._cursorMotionCount = 0;
+      host.connect('enter-event', () => (this._isEnabled = true));
+      host.connect(
+        'motion-event',
+        () => this._isEnabled && ++this._cursorMotionCount
+      );
+      host.connect('leave-event', () => {
+        this._isEnabled = false;
+        if (this._cursorMotionCount >= 3) {
+          return;
+        }
+      });
     }
   }
 );
@@ -2351,30 +1583,38 @@ const UISideViewBase = GObject.registerClass(
 const UIThumbnailViewer = GObject.registerClass(
   {
     GTypeName: 'UIThumbnailViewer',
-    Signals: { replace: { param_types: [Object.prototype] } }
+    Signals: { replace: { param_types: [Object.prototype] } },
+    Properties: {
+      loaded: GObject.ParamSpec.boolean(
+        'loaded',
+        'loaded',
+        'loaded',
+        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
+        false,
+        true,
+        false
+      )
+    }
   },
   class UIThumbnailViewer extends UISideViewBase {
     _init(sibling, params) {
       super._init(params);
 
       this._sibling = sibling;
-
-      this._connector = this.connect('notify::mapped', () => {
-        lg('[UIThumbnailViewer::_init::notify::mapped]');
-        this._initialize(null, () => this.disconnect(this._connector));
-      });
+      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _initialize(payload, onComplete) {
       if (!this._initialized) {
         this._loadShots(payload)
-          .then((allShots) => {
-            this.emit('replace', allShots[0] ?? {});
+          .then(([shots, batch]) => {
+            this.emit('replace', shots[0] ?? {});
             onComplete?.();
+            this._initialized = true;
+            this.notify('loaded');
+            this._streamBatch(batch);
           })
           .catch((err) => logError(err, 'Unable to load previous state'));
-      } else {
-        this._initialized = true;
       }
     }
 
@@ -2383,34 +1623,116 @@ const UIThumbnailViewer = GObject.registerClass(
       this._initialize(shots, cb);
     }
 
+    _streamBatch(batch) {
+      this.cancelSubscriptions();
+      if (batch.length === 0) {
+        return;
+      }
+
+      const CHUNK = 4;
+      let index = 0;
+      this._batchId = GLib.timeout_add(
+        GLib.PRIORITY_DEFAULT,
+        300,
+        function () {
+          const next = batch.slice(index, index + CHUNK);
+          for (const shot of next) {
+            this._addShot(shot);
+          }
+          lg(
+            '[UIThumbnailViewer::_streamBatch::timeout_add]',
+            'index:',
+            index,
+            'current:',
+            next.length
+          );
+          index += next.length;
+          this._nextBatch = batch.slice(index);
+          if (next.length === 0) {
+            this.cancelSubscriptions();
+            return GLib.SOURCE_REMOVE;
+          }
+
+          return GLib.SOURCE_CONTINUE;
+        }.bind(this)
+      );
+      GLib.Source.set_name_by_id(
+        this._batchId,
+        '[pixzzle] UIThumbnailViewer._streamBatch'
+      );
+    }
+
+    cancelSubscriptions() {
+      if (this._batchId) {
+        GLib.source_remove(this._batchId);
+        this._batchId = null;
+      }
+    }
+
+    /**
+     * If there's a paused batching operation,
+     * resume it. A batch is a collection
+     * of shots that are yet to be added
+     * to the stage (ThumbnailViewer).
+     * When main window is hidden, we don't
+     * want any background actions running.
+     * Hiding the main window before some
+     * actions complete causes the view
+     * to have incomplete data. We continue
+     * with such operations.
+     */
+    activateSubscriptions() {
+      if (!this._nextBatch?.length) {
+        return;
+      }
+
+      this._streamBatch(this._nextBatch);
+    }
+
+    _maxVisibleShots() {
+      const sibling_extent = this._sibling.get_transformed_extents();
+      const this_extent = this.get_transformed_extents();
+      const isSiblingNaN = Number.isNaN(sibling_extent.get_height());
+      const isThisNaN = Number.isNaN(this_extent.get_height());
+      const sibling_height = isSiblingNaN
+        ? INITIAL_HEIGHT * 0.8
+        : sibling_extent.get_height();
+      const this_height = isThisNaN
+        ? INITIAL_HEIGHT * 0.8
+        : this_extent.get_height();
+
+      const effective_height = Math.max(this_height, sibling_height);
+      return Math.floor((effective_height * 2) / this.width);
+    }
+
     _addShot(newShot, prepend) {
       const shot = new UIPreview(newShot, this.width);
       shot.connect('activate', (widget) => {
-        lg('UIThumbnailViewer::_addShot::shot::activate]', widget);
-        this.emit('replace', { name: widget._filename, widget: widget });
+        this.emit('replace', { name: widget._filename, widget: shot });
       });
       shot.connect('delete', (widget) => {
-        this._removeShot(widget).then((filename) => {
+        this._removeShot(shot).then((filename) => {
           const nextShot = this._viewBox.get_child_at_index(0);
           this.emit('replace', {
             name: nextShot?._filename ?? null,
-            widget: widget
+            widget: nextShot
           });
           const name = GLib.path_get_basename(filename);
           const thumbnail = GLib.build_filenamev([
             getThumbnailsLocation().get_path(),
             name
           ]);
-          lg(
-            '[UIThumbnailViewer::_addShot::shot::delete]',
-            thumbnail,
-            filename
-          );
+
           GLib.unlink(filename);
           GLib.unlink(thumbnail);
-          this._sibling.removeShot(this._date, this._currentFolder, filename);
+          this._sibling.removeShot(this._date, filename);
+
+          if (!nextShot) {
+            this.reload();
+          }
         });
       });
+
       if (prepend) {
         this._viewBox.insert_child_at_index(shot, 0);
       } else {
@@ -2470,10 +1792,19 @@ const UIThumbnailViewer = GObject.registerClass(
     async _loadShots(payload) {
       this._viewBox.destroy_all_children();
       const bundle = payload ?? (await this._sibling.latestShot());
+      lg('[UIThumbnailViewer::_loadShots]', 'payload:', bundle.shots.length);
+      this._is_flat = bundle.is_flat;
       this._date = bundle.date;
-      this._currentFolder = bundle.widget;
       const shots = [];
-      for (const shot of bundle.shots) {
+      const section = bundle.shots.slice(0, this._maxVisibleShots());
+      lg(
+        '[UIThumbnailViewer::_loadShots]',
+        'number of initial thumbs:',
+        section.length,
+        'total number of shots:',
+        bundle.shots.length
+      );
+      for (const shot of section) {
         shots.push(this._addShot(shot));
       }
       const newShotProps = bundle.nid;
@@ -2481,7 +1812,17 @@ const UIThumbnailViewer = GObject.registerClass(
         this.emit('replace', { ...newShotProps, ...shots[0] });
       }
 
-      return shots;
+      const unloaded = bundle.shots.slice(section.length);
+
+      return [shots, unloaded];
+    }
+
+    get loading() {
+      return !this._initialized;
+    }
+
+    _onDestroy() {
+      this.cancelSubscriptions();
     }
   }
 );
@@ -2499,17 +1840,15 @@ const UIPreview = GObject.registerClass(
       let pixbuf;
       if (!thumbnail) {
         const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
-        pixbuf = baseBuf.new_subpixbuf(0, 0, span, span);
-        if (pixbuf === null) {
+        if (span > baseBuf.get_width() || span > baseBuf.get_height()) {
           const aspectRatio = baseBuf.get_width() / baseBuf.get_height();
+          const scaledHeight = Math.max((span * 1.0) / aspectRatio, span);
           pixbuf = baseBuf
-            .scale_simple(
-              span,
-              Math.max((span * 1.0) / aspectRatio, span),
-              GdkPixbuf.InterpType.BILINEAR
-            )
-            .new_subpixbuf(0, 0, span, span);
+            .scale_simple(span, scaledHeight, GdkPixbuf.InterpType.BILINEAR)
+            .new_subpixbuf(0, 0, span - 1, span - 1);
           pixbuf.set_option(TINY_IMAGE, 'true');
+        } else {
+          pixbuf = baseBuf.new_subpixbuf(0, 0, span - 1, span - 1);
         }
 
         this._saveThumbnail(pixbuf, actualFile);
@@ -2525,7 +1864,7 @@ const UIPreview = GObject.registerClass(
          */
         this._surface.add_effect(
           new Shell.BlurEffect({
-            brightness: FULLY_OPAQUE,
+            brightness: Constants.FULLY_OPAQUE,
             mode: Shell.BlurMode.ACTOR,
             sigma: 2.5
           })
@@ -2631,31 +1970,19 @@ const UIFolderViewer = GObject.registerClass(
   class UIFolderViewer extends UISideViewBase {
     _init(params) {
       super._init(params);
+      this._folders = {};
     }
 
-    _addShot(name, shots, gradient, extras = {}, prepend = false) {
+    _addShot(name, shots, gradient, prepend = false) {
       const folder = new UIFolder(name, shots, gradient, {
         style_class: 'pixzzle-ui-folder'
       });
       folder.connect('activate', (widget, params) => {
-        /* If `params` is empty, the `shots` array doesn't contain
-         * a new screenshot. Don't send `extras` which may contain
-         * stale shots data. We do this because of properties such
-         * as `nid` used in tagging of new shots. This property
-         * is used in determining if for example ocr should be
-         * performed once the shot is staged. If `extras` is not
-         * cleared, ocr action will be repeatedly performed once
-         * the shot with the `ocr` property is staged.
-         */
-        const override =
-          Object.keys(params).length == 0 ? {} : { ...extras, ...params };
         this.emit('swap-view', {
           shots: widget._shots,
           date: name,
-          widget: folder,
-          ...override
+          ...params
         });
-        lg('[UIFolderViewer::_addShot::folder::activate]', widget._shots);
       });
       /*
       shot.connect('delete', (widget) => {
@@ -2675,6 +2002,7 @@ const UIFolderViewer = GObject.registerClass(
       }
 
       folder.set_size(this.width, this.width);
+      this._folders[name] = folder;
 
       return folder;
     }
@@ -2697,6 +2025,7 @@ const UIFolderViewer = GObject.registerClass(
     }
 
     async addNewShot(newShot) {
+      lg('[UIFolderViewer::addNewShot]', newShot.ocr);
       if (!this._shotGroups) {
         await this._loadShots();
       }
@@ -2704,19 +2033,19 @@ const UIFolderViewer = GObject.registerClass(
       /*
        * The `nid` property sent via the `activate`
        * signal helps distinguish new screenshots
-       * with metadata attached from stale shots.
+       * with metadata attached from old shots.
        */
       const today = fmt(Date.now());
       if (!this._shotGroups[today]) {
+        lg('[UIFolderViewer::addNewShot] today:', today);
         this._shotGroups[today] = [newShot.name];
         const folder = this._addShot(
           today,
           this._shotGroups[today],
           this._gradients[Math.floor(Math.random() * this._gradients.length)],
-          { nid: newShot },
           true /* prepend */
         );
-        folder.emit('activate', {});
+        folder.emit('activate', { nid: newShot });
       } else {
         // Insert new shots name at the front to maintain
         // sort ordering.
@@ -2726,21 +2055,39 @@ const UIFolderViewer = GObject.registerClass(
       }
     }
 
-    removeShot(date, folder, shot) {
-      lg('[UIFolderViewer::removeShot]', 'date:', date, 'shot:', shot);
-      const index = this._shotGroups[date].findIndex((name) => name === shot);
-      this._shotGroups[date].splice(index, 1);
-      if (this._shotGroups[date].length === 0) {
-        delete this._shotGroups[date];
+    removeShot(date, shot) {
+      lg(
+        '[UIFolderViewer::removeShot]',
+        'date:',
+        date,
+        'shot:',
+        shot,
+        this._shotsDate
+      );
+
+      const [index, new_date] = this._locate(shot, date);
+      this._shotGroups[new_date].splice(index, 1);
+      if (this._shotGroups[new_date].length === 0) {
+        delete this._shotGroups[new_date];
       }
-      if (this._shotGroups[date]) {
+      if (this._shotGroups[new_date]) {
         return;
       }
 
-      if (this._shotsDate[0] === date) {
+      if (this._shotsDate[0] === new_date) {
         this._shotsDate.splice(0, 1);
       }
-      this._viewBox.remove_actor(folder);
+      this._viewBox.remove_actor(this._folders[new_date]);
+      delete this._folders[new_date];
+    }
+
+    _locate(shot, date) {
+      for (const d of date ? [date] : this._shotsDate) {
+        const idx = this._shotGroups[d].findIndex((name) => name === shot);
+        if (idx !== -1) {
+          return [idx, d];
+        }
+      }
     }
 
     async _loadShots() {
@@ -2756,7 +2103,6 @@ const UIFolderViewer = GObject.registerClass(
       }
 
       const allShots = await this._processShots(snapshotDir);
-      lg('[UIFolderViewer::_loadShots]', 'all shots:', allShots);
       // Group shots taken on the same day together
       const cluster = {};
       const gradients = JSON.parse(content);
@@ -2796,6 +2142,24 @@ const UIFolderViewer = GObject.registerClass(
           this._gradients[index % this._gradients.length]
         )
       );
+    }
+
+    async flatten() {
+      if (!this._shotGroups) {
+        await this._loadShots();
+      }
+
+      const shots = Object.entries(this._shotGroups).reduce(
+        (acc, [key, value]) => acc.concat(value),
+        []
+      );
+      shots.sort(filesDateSorter);
+      this.emit('swap-view', { shots, is_flat: true });
+    }
+
+    async activate(n) {
+      lg('[UIFolderViewer::activate]', 'triggering ', n);
+      this._folders[n]?.emit('activate', {});
     }
 
     _processShots(directory) {
@@ -2839,12 +2203,6 @@ const UIFolderViewer = GObject.registerClass(
           }
         );
       });
-
-      function filesDateSorter(one, other) {
-        const oneDate = getDate(one);
-        const otherDate = getDate(other);
-        return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
-      }
     }
   }
 );
@@ -2859,7 +2217,7 @@ const UIFolder = GObject.registerClass(
       delete: {}
     }
   },
-  class UIFolder extends St.BoxLayout {
+  class UIFolder extends St.Widget {
     _init(name, shots, gradient, params) {
       super._init({ ...params, layout_manager: new Clutter.BinLayout() });
 
@@ -2895,6 +2253,43 @@ const UIFolder = GObject.registerClass(
           ''
         );
       }
+    }
+  }
+);
+
+const GBoolean = GObject.registerClass(
+  {
+    Properties: {
+      changed: GObject.ParamSpec.boolean(
+        'changed',
+        'changed',
+        'changed',
+        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
+        false,
+        true,
+        false
+      )
+    }
+  },
+
+  class GBoolean extends GObject.Object {
+    _init(initial_state) {
+      super._init();
+
+      this._value = initial_state;
+    }
+
+    get_value() {
+      return this._value;
+    }
+
+    set_value(new_val) {
+      if (new_val === this._value) {
+        return;
+      }
+
+      this._value = new_val;
+      this.notify('changed');
     }
   }
 );

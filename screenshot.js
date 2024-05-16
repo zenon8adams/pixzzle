@@ -44,6 +44,7 @@ const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
 const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation } = Me.imports.utils;
+const { storeScreenshot } = Me.imports.common;
 const { UITooltip } = Me.imports.tooltip;
 
 const IconLabelButton = GObject.registerClass(
@@ -1122,11 +1123,11 @@ var UIShutter = GObject.registerClass(
       });
       this._bottomRowContainer.add_child(this._showPointerButtonContainer);
 
-      const iconName = 'pixzzle-ui-ocr-action-symbolic.svg';
+      const iconPath = 'icons/pixzzle-ui-ocr-action-symbolic.svg';
       this._ocrActionButton = new St.Button({
         style_class: 'pixzzle-ui-ocr-action-button',
         child: new St.Icon({
-          gicon: Gio.icon_new_for_string(`${Me.path}/icons/${iconName}`),
+          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
           style_class: 'pixzzle-ui-ocr-action-icon'
         }),
         toggle_mode: true
@@ -1457,47 +1458,6 @@ var UIShutter = GObject.registerClass(
     }
 
     /**
-     * Stores a PNG-encoded screenshot into the clipboard and a file, and shows a
-     * notification.
-     *
-     * @param {GLib.Bytes} bytes - The PNG-encoded screenshot.
-     * @param {GdkPixbuf.Pixbuf} pixbuf - The Pixbuf with the screenshot.
-     */
-    _storeScreenshot(bytes, pixbuf) {
-      // Store to the clipboard first in case storing to file fails.
-      const clipboard = St.Clipboard.get_default();
-      clipboard.set_content(St.ClipboardType.CLIPBOARD, 'image/png', bytes);
-
-      const rand = GLib.uuid_string_random();
-      const time = GLib.DateTime.new_now_local();
-      const fmt = rand + '-%s';
-
-      const lockdownSettings = new Gio.Settings({
-        schema_id: 'org.gnome.desktop.lockdown'
-      });
-      const disableSaveToDisk = lockdownSettings.get_boolean(
-        'disable-save-to-disk'
-      );
-
-      if (!disableSaveToDisk) {
-        const dir = getShotsLocation();
-        const timestamp = time.format('%Y-%m-%d-%H-%M-%S');
-        const name = fmt.format(timestamp);
-
-        const file = Gio.File.new_for_path(
-          GLib.build_filenamev([dir.get_path(), `${name}.png`])
-        );
-
-        const stream = file.create(Gio.FileCreateFlags.NONE, null);
-        stream.write_bytes(bytes, null);
-
-        return file.get_path();
-      }
-
-      return null;
-    }
-
-    /**
      * Captures a screenshot from a texture, given a region, scale and optional
      * cursor data.
      *
@@ -1534,7 +1494,7 @@ var UIShutter = GObject.registerClass(
       );
 
       stream.close(null);
-      const filename = this._storeScreenshot(stream.steal_as_bytes(), pixbuf);
+      const filename = storeScreenshot(stream.steal_as_bytes(), pixbuf);
       this.emit('new-shot', {
         name: filename,
         ocr: this._ocrActionButton.checked

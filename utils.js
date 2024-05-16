@@ -21,6 +21,10 @@ const { Gio, GLib } = imports.gi;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
+var Constants = {
+    FULLY_OPAQUE: 255
+};
+
 var SCHEMA_NAME = 'org.gnome.shell.extensions.pixzzle';
 
 const debug = false;
@@ -73,6 +77,12 @@ function getDate(fullname) {
   const parts = effective.match(/(\d+-\d+-\d+)-(\d+-\d+-\d+)/);
   const [date, time] = [parts[1], parts[2].replaceAll('-', ':')];
   return Date.parse(date + ' ' + time);
+}
+
+function filesDateSorter(one, other) {
+  const oneDate = getDate(one);
+  const otherDate = getDate(other);
+  return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
 }
 
 function fmt(shot) {
