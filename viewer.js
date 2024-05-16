@@ -127,7 +127,7 @@ var UIMainViewer = GObject.registerClass(
 
       this.reset();
 
-      this._closeButton = new St.Button({
+      this._closeButton = new UIButton({
         style_class: 'pixzzle-ui-close-button',
         child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
         x: 0,
