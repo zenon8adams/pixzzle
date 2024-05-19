@@ -128,7 +128,7 @@ var UIMainViewer = GObject.registerClass(
       const watcher = getActionWatcher(this).addWatch(MODAL_CHECK_INTERVAL, {
         reaction: this._close.bind(this, true /* instantly */),
         compare: (one, other) => one === other,
-        action: () => Main.modalCount * (!this._overlay.visible)
+        action: () => Main.modalCount * !this._overlay.visible
       });
 
       this.reset();
@@ -1759,7 +1759,14 @@ const UIThumbnailViewer = GObject.registerClass(
     _confirmDelete(cb) {
       Dialog.getDialog().display(
         {
-          header: 'Confirmation',
+          icon: {
+            icon_name: 'pixzzle-ui-warning-sprite.png',
+            animatable: true,
+            system_icon: false,
+            size: 36,
+            rate: 36
+          },
+          header: 'Warning',
           prompt: 'Are you sure you want to delete picture permanently?',
           ok: 'Yes',
           cancel: 'No'
