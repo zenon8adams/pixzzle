@@ -33,7 +33,6 @@ const {
 const Cairo = imports.cairo;
 const File = Gio.File;
 const Main = imports.ui.main;
-const GrabHelper = imports.ui.grabHelper;
 const MessageTray = imports.ui.messageTray;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
@@ -52,7 +51,8 @@ const {
   Constants
 } = Me.imports.utils;
 const { storeScreenshot } = Me.imports.common;
-const { UIShutter } = Me.imports.screenshot;
+const Shutter = Me.imports.screenshot;
+const Overlay = Me.imports.overlay;
 const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
 const Prefs = Me.imports.prefs;
@@ -60,6 +60,7 @@ const { getActionWatcher } = Me.imports.watcher;
 const { Timer } = Me.imports.timer;
 const { UITooltip } = Me.imports.tooltip;
 const { UIImageRenderer } = Me.imports.renderer;
+const Dialog = Me.imports.dialog;
 const Docking = Me.imports.dock.docking;
 
 const INITIAL_WIDTH = 500;
@@ -114,20 +115,25 @@ var UIMainViewer = GObject.registerClass(
 
       Main.layoutManager.addChrome(this);
 
+      this._overlay = new Overlay.UIOverlay(this);
+
       /*
        * Watch for new modal dialog and hide viewer
        * when there's a change in the number of dialogs
        * visible as defined by `Main.modalCount`.
+       * If our modal is visible, don't hide viewer.
+       * FIXME: Disable watch when the modal is visible
+       * and re-enable once the modal is hidden.
        */
       const watcher = getActionWatcher(this).addWatch(MODAL_CHECK_INTERVAL, {
         reaction: this._close.bind(this, true /* instantly */),
         compare: (one, other) => one === other,
-        action: () => Main.modalCount
+        action: () => Main.modalCount * (!this._overlay.visible)
       });
 
       this.reset();
 
-      this._closeButton = new St.Button({
+      this._closeButton = new UIButton({
         style_class: 'pixzzle-ui-close-button',
         child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
         x: 0,
@@ -576,7 +582,7 @@ var UIMainViewer = GObject.registerClass(
 
     _showScreenshotView() {
       if (!this._shutter) {
-        this._shutter = new UIShutter();
+        this._shutter = new Shutter.UIShutter();
         this._shutterClosingHandler = this._shutter.connect(
           'begin-close',
           () => {
@@ -1003,6 +1009,7 @@ var UIMainViewer = GObject.registerClass(
         this._dock = null;
       }
 
+      //this._modal = null;
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
       this._unbindShortcuts();
@@ -1711,25 +1718,27 @@ const UIThumbnailViewer = GObject.registerClass(
         this.emit('replace', { name: widget._filename, widget: shot });
       });
       shot.connect('delete', (widget) => {
-        this._removeShot(shot).then((filename) => {
-          const nextShot = this._viewBox.get_child_at_index(0);
-          this.emit('replace', {
-            name: nextShot?._filename ?? null,
-            widget: nextShot
+        this._confirmDelete(() => {
+          this._removeShot(shot).then((filename) => {
+            const nextShot = this._viewBox.get_child_at_index(0);
+            this.emit('replace', {
+              name: nextShot?._filename ?? null,
+              widget: nextShot
+            });
+            const name = GLib.path_get_basename(filename);
+            const thumbnail = GLib.build_filenamev([
+              getThumbnailsLocation().get_path(),
+              name
+            ]);
+
+            GLib.unlink(filename);
+            GLib.unlink(thumbnail);
+            this._sibling.removeShot(this._date, filename);
+
+            if (!nextShot) {
+              this.reload();
+            }
           });
-          const name = GLib.path_get_basename(filename);
-          const thumbnail = GLib.build_filenamev([
-            getThumbnailsLocation().get_path(),
-            name
-          ]);
-
-          GLib.unlink(filename);
-          GLib.unlink(thumbnail);
-          this._sibling.removeShot(this._date, filename);
-
-          if (!nextShot) {
-            this.reload();
-          }
         });
       });
 
@@ -1745,6 +1754,22 @@ const UIThumbnailViewer = GObject.registerClass(
     _addNewShot(newShot) {
       const shot = this._addShot(newShot.name, true /* prepend */);
       this.emit('replace', { ...newShot, ...shot });
+    }
+
+    _confirmDelete(cb) {
+      Dialog.getDialog().display(
+        {
+          header: 'Confirmation',
+          prompt: 'Are you sure you want to delete picture permanently?',
+          ok: 'Yes',
+          cancel: 'No'
+        },
+        (status) => {
+          if (status === Dialog.ModalReply.OKAY) {
+            cb();
+          }
+        }
+      );
     }
 
     _switchActive(detail) {

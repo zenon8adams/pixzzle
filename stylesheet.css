@@ -317,3 +317,63 @@
   font-weight: 800;
   padding: 0 10px 0 10px;
 }
+
+#UIDialog{
+    background-color: #fff;
+    padding: 0.4em 0.8em 0.8em 0.8em;
+    border-radius: 10px;
+}
+.pixzzle-ui-dialog-container {
+    background-color: #00000000;
+}
+
+.pixzzle-ui-dialog-header-text {
+    font-size: 1.7em;
+    font-weight: 800;
+    color: #000; 
+}
+
+.pixzzle-ui-dialog-exit-button {
+  border-radius: 99px;
+  color: #959595;
+}
+
+.pixzzle-ui-dialog-exit-button StIcon {
+  icon-size: 1.2em;
+}
+
+.pixzzle-ui-dialog-exit-button:hover {
+    border: 1px solid #959595;
+}
+
+.pixzzle-ui-dialog-separator {
+    margin-top: 1em;
+    margin-bottom: 0.7em;
+    background-color: #959595;
+}
+
+.pixzzle-ui-dialog-accept-button {
+    background-color: #2167E8;
+    padding: 4px 14px;
+    color: #fff;
+    border-radius: 8px;
+    margin-right: 10px;
+    font-size: 14px;
+}
+
+.pixzzle-ui-dialog-accept-button:hover {
+    background-color: #1b55bf;
+}
+
+.pixzzle-ui-dialog-cancel-button {
+    background-color: #ff0000;
+    padding: 4px 14px;
+    color: #fff;
+    font-size: 14px;
+    border-radius: 8px;
+}
+
+.pixzzle-ui-dialog-cancel-button:hover {
+    background-color: #cf0404;
+}
+
