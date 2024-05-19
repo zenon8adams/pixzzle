@@ -16,8 +16,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-const { GObject, GLib, Clutter, St, Shell } = imports.gi;
+const { GObject, Gio, GLib, Clutter, St, Shell } = imports.gi;
 const Main = imports.ui.main;
+const Animator = imports.ui.animation;
 
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
@@ -67,9 +68,11 @@ var UIDialog = GObject.registerClass(
       });
       this.add_child(this._headerContainer);
 
+      /* If we are given an icon, use it. */
+      this._headerIcon = null;
+
       this._headerText = new St.Label({
         style_class: 'pixzzle-ui-dialog-header-text',
-        text: 'Confirmation',
         x_align: Clutter.ActorAlign.START,
         y_align: Clutter.ActorAlign.CENTER,
         x_expand: true,
@@ -144,7 +147,13 @@ var UIDialog = GObject.registerClass(
     }
 
     display(dialogue, cb) {
-      const { ok, cancel, header, prompt } = dialogue;
+      const { ok, cancel, icon, header, prompt } = dialogue;
+      if (!this._headerIcon && icon) {
+        this._headerIcon = new UIIcon(icon);
+        this._headerContainer.insert_child_at_index(this._headerIcon, 0);
+      } else if (icon) {
+        this._headerIcon.replace(icon);
+      }
       ok && this._acceptButton.set_label(ok);
       cancel && this._cancelButton.set_label(cancel);
       header && this._headerText.set_text(header);
@@ -159,6 +168,7 @@ var UIDialog = GObject.registerClass(
       this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
         this.opacity = 0;
         this.show();
+        this._headerIcon.open();
 
         const extents = this.anchor.get_transformed_extents();
         const xOffset = Math.floor((extents.get_width() - this.width) / 2);
@@ -196,6 +206,7 @@ var UIDialog = GObject.registerClass(
         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         onComplete: () => {
           this.hide();
+          this._headerIcon.close();
           this.overlay._close();
           this._replyFn?.(status);
         }
@@ -217,7 +228,7 @@ var UIDialog = GObject.registerClass(
       lg('[UIDialog::vfunc_key_press_event] keycode:', symbol);
       if (symbol === Clutter.KEY_Return) {
         this.close(ModalReply.OKAY);
-      lg('[UIDialog::vfunc_key_press_event] enter pressed');
+        lg('[UIDialog::vfunc_key_press_event] enter pressed');
       } else if (symbol === Clutter.KEY_Escape) {
         this.close(ModalReply.CANCEL);
       }
@@ -247,3 +258,121 @@ function getDialog() {
 
   return _modalDialog;
 }
+
+const UIIcon = GObject.registerClass(
+  {
+    Properties: {
+      animatable: GObject.ParamSpec.boolean(
+        'animatable',
+        'animatable',
+        'animatable',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        false
+      ),
+      system_icon: GObject.ParamSpec.boolean(
+        'system_icon',
+        'system_icon',
+        'system_icon',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        false
+      ),
+      icon_name: GObject.ParamSpec.string(
+        'icon_name',
+        'icon_name',
+        'icon_name',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        null
+      ),
+      size: GObject.ParamSpec.int64(
+        'size',
+        'size',
+        'size',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        0,
+        Number.MAX_SAFE_INTEGER,
+        0
+      ),
+      rate: GObject.ParamSpec.int64(
+        'rate',
+        'rate',
+        'rate',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        0,
+        Number.MAX_SAFE_INTEGER,
+        0
+      )
+    }
+  },
+  class UIIcon extends St.Widget {
+    _init(params) {
+      super._init(params);
+
+      this.create();
+    }
+
+    replace(new_icon) {
+      if (new_icon.icon_name === this.icon_name) {
+        return;
+      }
+
+      this.icon_name = new_icon.icon_name;
+      this.animatable = !!new_icon.animatable;
+      this.system_icon = !!new_icon.system_icon;
+      this.size = new_icon.size;
+      this.rate = new_icon.rate;
+      this.remove_child(this._icon);
+      this.create();
+    }
+
+    create() {
+      if (!this.icon_name) {
+        return;
+      }
+
+      const BASE_PATH = `${Me.path}/assets/icons/`;
+      if (this.animatable) {
+        this._icon = new Animator.Animation(
+          Gio.File.new_for_path(`${BASE_PATH}/${this.icon_name}`),
+          this.size,
+          this.size,
+          this.rate
+        );
+      } else if (this.system_icon) {
+        this._icon = new St.Icon({
+          icon_name: this.icon_name
+        });
+      } else {
+        this._icon = new St.Icon({
+          gicon: Gio.icon_new_for_string(`${BASE_PATH}/${this.icon_name}`)
+        });
+      }
+      this.add_child(this._icon);
+    }
+
+    open() {
+      if (this.animatable) {
+        this.play();
+      }
+    }
+
+    close() {
+      if (this.animatable) {
+        this.pause();
+      }
+    }
+
+    play() {
+      if (!this.animatable) {
+        throw new Error('Error calling play() on non-animatable icon');
+      }
+      this._icon.play();
+    }
+
+    pause() {
+      if (!this.animatable) {
+        throw new Error('Error calling pause() on non-animatable icon');
+      }
+      this._icon.stop();
+    }
+  }
+);
