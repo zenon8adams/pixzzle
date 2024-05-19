@@ -43,7 +43,7 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation } = Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation, format } = Me.imports.utils;
 const { storeScreenshot } = Me.imports.common;
 const { UITooltip } = Me.imports.tooltip;
 
