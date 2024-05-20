@@ -137,6 +137,8 @@ var UIDialog = GObject.registerClass(
       this._timeoutId = null;
 
       this.set_width(400);
+      /* Set default focus button to accept button */
+      this._cycleFocus(ModalReply.OKAY);
 
       this.anchor.connect('destroy', this._onDestroy.bind(this));
       this._acceptButton.connect('clicked', () => this.close(ModalReply.OKAY));
@@ -211,6 +213,18 @@ var UIDialog = GObject.registerClass(
           this._replyFn?.(status);
         }
       });
+    }
+
+    _cycleFocus(button) {
+      if (button === ModalReply.OKAY) {
+        this._acceptButton.remove_style_class_name('focus');
+        this._acceptButton.add_style_class_name('focus');
+        this._cancelButton.remove_style_class_name('focus');
+      } else if (button === ModalReply.CANCEL) {
+        this._cancelButton.remove_style_class_name('focus');
+        this._cancelButton.add_style_class_name('focus');
+        this._acceptButton.remove_style_class_name('focus');
+      }
     }
 
     _onDestroy() {
