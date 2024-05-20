@@ -43,7 +43,9 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, SHOT_STORE } = Me.imports.utils;
+const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation, format } = Me.imports.utils;
+const { storeScreenshot } = Me.imports.common;
+const { UITooltip } = Me.imports.tooltip;
 
 const IconLabelButton = GObject.registerClass(
   class IconLabelButton extends St.Button {
@@ -60,74 +62,6 @@ const IconLabelButton = GObject.registerClass(
       this._container.add_child(
         new St.Label({ text: label, x_align: Clutter.ActorAlign.CENTER })
       );
-    }
-  }
-);
-
-const Tooltip = GObject.registerClass(
-  class Tooltip extends St.Label {
-    _init(widget, params) {
-      super._init(params);
-
-      this._widget = widget;
-      this._timeoutId = null;
-
-      this._widget.connect('notify::hover', () => {
-        if (this._widget.hover) this.open();
-        else this.close();
-      });
-    }
-
-    open() {
-      if (this._timeoutId) return;
-
-      this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-        this.opacity = 0;
-        this.show();
-
-        const extents = this._widget.get_transformed_extents();
-
-        const xOffset = Math.floor((extents.get_width() - this.width) / 2);
-        const x = Math.clamp(
-          extents.get_x() + xOffset,
-          0,
-          global.stage.width - this.width
-        );
-
-        const node = this.get_theme_node();
-        const yOffset = node.get_length('-y-offset');
-
-        const y = extents.get_y() - this.height - yOffset;
-
-        this.set_position(x, y);
-        this.ease({
-          opacity: 255,
-          duration: 150,
-          mode: Clutter.AnimationMode.EASE_OUT_QUAD
-        });
-
-        this._timeoutId = null;
-        return GLib.SOURCE_REMOVE;
-      });
-      GLib.Source.set_name_by_id(this._timeoutId, '[gnome-shell] tooltip.open');
-    }
-
-    close() {
-      if (this._timeoutId) {
-        GLib.source_remove(this._timeoutId);
-        this._timeoutId = null;
-        return;
-      }
-
-      if (!this.visible) return;
-
-      this.remove_all_transitions();
-      this.ease({
-        opacity: 0,
-        duration: 100,
-        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        onComplete: () => this.hide()
-      });
     }
   }
 );
@@ -967,7 +901,7 @@ var UIShutter = GObject.registerClass(
   {
     Signals: {
       'begin-close': {},
-      'new-shot': { param_types: [GObject.TYPE_STRING] }
+      'new-shot': { param_types: [Object.prototype] }
     }
   },
   class UIShutter extends St.Widget {
@@ -1016,9 +950,6 @@ var UIShutter = GObject.registerClass(
         })
       );
       this._stageScreenshotContainer.add_child(this._stageScreenshot);
-
-      this._cursor = new St.Widget();
-      this._stageScreenshotContainer.add_child(this._cursor);
 
       this._openingCoroutineInProgress = false;
       this._grabHelper = new GrabHelper.GrabHelper(this, {
@@ -1130,7 +1061,7 @@ var UIShutter = GObject.registerClass(
       this._typeButtonContainer.add_child(this._selectionButton);
 
       this.add_child(
-        new Tooltip(this._selectionButton, {
+        new UITooltip(this._selectionButton, {
           text: _('Area Selection'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
@@ -1153,7 +1084,7 @@ var UIShutter = GObject.registerClass(
       this._typeButtonContainer.add_child(this._screenButton);
 
       this.add_child(
-        new Tooltip(this._screenButton, {
+        new UITooltip(this._screenButton, {
           text: _('Screen Selection'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
@@ -1172,7 +1103,7 @@ var UIShutter = GObject.registerClass(
         new St.Widget({ style_class: 'pixzzle-ui-capture-button-circle' })
       );
       this.add_child(
-        new Tooltip(this._captureButton, {
+        new UITooltip(this._captureButton, {
           /* Translators: since this string refers to an action,
     it needs to be phrased as a verb. */
           text: _('Capture'),
@@ -1192,28 +1123,24 @@ var UIShutter = GObject.registerClass(
       });
       this._bottomRowContainer.add_child(this._showPointerButtonContainer);
 
-      this._showPointerButton = new St.Button({
-        style_class: 'pixzzle-ui-show-pointer-button',
+      const iconPath = 'icons/pixzzle-ui-ocr-action-symbolic.svg';
+      this._ocrActionButton = new St.Button({
+        style_class: 'pixzzle-ui-ocr-action-button',
         child: new St.Icon({
-          icon_name: 'screenshot-ui-show-pointer-symbolic'
+          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
+          style_class: 'pixzzle-ui-ocr-action-icon'
         }),
         toggle_mode: true
       });
-      this._showPointerButtonContainer.add_child(this._showPointerButton);
+      this._showPointerButtonContainer.add_child(this._ocrActionButton);
 
       this.add_child(
-        new Tooltip(this._showPointerButton, {
-          text: _('Show Pointer'),
+        new UITooltip(this._ocrActionButton, {
+          text: _('Perform OCR'),
           style_class: 'pixzzle-ui-tooltip',
           visible: false
         })
       );
-
-      this._showPointerButton.connect('notify::checked', () => {
-        const state = this._showPointerButton.checked;
-        this._cursor.visible = state;
-      });
-      this._cursor.visible = false;
 
       this._monitorBins = [];
       this._rebuildMonitorBins();
@@ -1342,18 +1269,6 @@ var UIShutter = GObject.registerClass(
           this._stageScreenshot.set_content(content);
           this._scale = scale;
 
-          if (cursorContent !== null) {
-            this._cursor.set_content(cursorContent);
-            this._cursor.set_position(cursorPoint.x, cursorPoint.y);
-
-            let [, w, h] = cursorContent.get_preferred_size();
-            w *= cursorScale;
-            h *= cursorScale;
-            this._cursor.set_size(w, h);
-
-            this._cursorScale = cursorScale;
-          }
-
           this._stageScreenshotContainer.show();
         } catch (e) {
           log(`Error capturing screenshot: ${e.message}`);
@@ -1412,8 +1327,6 @@ var UIShutter = GObject.registerClass(
       this._stageScreenshotContainer.hide();
 
       this._stageScreenshot.set_content(null);
-      this._cursor.set_content(null);
-
       this._areaSelector.reset();
     }
 
@@ -1430,7 +1343,7 @@ var UIShutter = GObject.registerClass(
       this.remove_all_transitions();
       this.ease({
         opacity: 0,
-        duration: 200,
+        duration: 300,
         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         onComplete: this._finishClosing.bind(this)
       });
@@ -1535,57 +1448,13 @@ var UIShutter = GObject.registerClass(
         const texture = content.get_texture();
         const geometry = this._getSelectedGeometry(true);
 
-        let cursorTexture = this._cursor.content?.get_texture();
-        if (!this._cursor.visible) cursorTexture = null;
-
         this._captureScreenshot(texture, geometry, this._scale, {
-          texture: cursorTexture ?? null,
-          x: this._cursor.x * this._scale,
-          y: this._cursor.y * this._scale,
-          scale: this._cursorScale
+          texture: null,
+          x: this._scale,
+          y: this._scale,
+          scale: this._scale
         }).catch((e) => logError(e, 'Error capturing screenshot'));
       }
-    }
-
-    /**
-     * Stores a PNG-encoded screenshot into the clipboard and a file, and shows a
-     * notification.
-     *
-     * @param {GLib.Bytes} bytes - The PNG-encoded screenshot.
-     * @param {GdkPixbuf.Pixbuf} pixbuf - The Pixbuf with the screenshot.
-     */
-    _storeScreenshot(bytes, pixbuf) {
-      // Store to the clipboard first in case storing to file fails.
-      const clipboard = St.Clipboard.get_default();
-      clipboard.set_content(St.ClipboardType.CLIPBOARD, 'image/png', bytes);
-
-      const rand = GLib.uuid_string_random();
-      const time = GLib.DateTime.new_now_local();
-      const fmt = rand + '-%s';
-
-      const lockdownSettings = new Gio.Settings({
-        schema_id: 'org.gnome.desktop.lockdown'
-      });
-      const disableSaveToDisk = lockdownSettings.get_boolean(
-        'disable-save-to-disk'
-      );
-
-      if (!disableSaveToDisk) {
-        const dir = SHOT_STORE;
-        const timestamp = time.format('%Y-%m-%d-%H-%M-%S');
-        const name = fmt.format(timestamp);
-
-        const file = Gio.File.new_for_path(
-          GLib.build_filenamev([dir.get_path(), `${name}.png`])
-        );
-
-        const stream = file.create(Gio.FileCreateFlags.NONE, null);
-        stream.write_bytes(bytes, null);
-
-        return file.get_path();
-      }
-
-      return null;
     }
 
     /**
@@ -1625,8 +1494,11 @@ var UIShutter = GObject.registerClass(
       );
 
       stream.close(null);
-      const filename = this._storeScreenshot(stream.steal_as_bytes(), pixbuf);
-      this.emit('new-shot', filename);
+      const filename = storeScreenshot(stream.steal_as_bytes(), pixbuf);
+      this.emit('new-shot', {
+        name: filename,
+        ocr: this._ocrActionButton.checked
+      });
     }
 
     vfunc_key_press_event(event) {
@@ -1652,7 +1524,7 @@ var UIShutter = GObject.registerClass(
       }
 
       if (symbol === Clutter.KEY_p || symbol === Clutter.KEY_P) {
-        this._showPointerButton.checked = !this._showPointerButton.checked;
+        this._ocrActionButton.checked = !this._ocrActionButton.checked;
         return Clutter.EVENT_STOP;
       }
 

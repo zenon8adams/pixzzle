@@ -19,15 +19,17 @@
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
-const {UIMainViewer} = Me.imports.viewer;
-const {lg} = Me.imports.utils;
+const { UIMainViewer } = Me.imports.viewer;
+const { lg } = Me.imports.utils;
 
 class Extension {
-  constructor(uuid) { this._uuid = uuid; }
+  constructor(uuid) {
+    this._uuid = uuid;
+
+    ExtensionUtils.initTranslations();
+  }
 
   enable() {
-    ExtensionUtils.initTranslations();
-
     this._shotUI = new UIMainViewer();
     lg('start');
   }
@@ -38,4 +40,6 @@ class Extension {
   }
 }
 
-function init(meta) { return new Extension(meta.uuid); }
+function init(meta) {
+  return new Extension(meta.uuid);
+}

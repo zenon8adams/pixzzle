@@ -21,6 +21,10 @@ const { Gio, GLib } = imports.gi;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
+var Constants = {
+    FULLY_OPAQUE: 255
+};
+
 var SCHEMA_NAME = 'org.gnome.shell.extensions.pixzzle';
 
 const debug = false;
@@ -58,10 +62,36 @@ const _getShotStore = function () {
   return path;
 };
 
-var SHOT_STORE = _getShotStore(
-  GLib.get_user_cache_dir(),
-  'extension',
-  SCHEMA_NAME
-);
+function getShotsLocation() {
+  return _getShotStore(GLib.get_user_cache_dir(), 'extension', SCHEMA_NAME);
+}
 
-var THUMBNAIL_STORE = _getShotStore(SHOT_STORE.get_path(), '.thumbnail');
+function getThumbnailsLocation() {
+  return _getShotStore(getShotsLocation().get_path(), '.thumbnail');
+}
+
+function getDate(fullname) {
+  const name = GLib.path_get_basename(fullname);
+  const uuid = GLib.uuid_string_random().length + 1;
+  const effective = name.slice(uuid, name.indexOf('.'));
+  const parts = effective.match(/(\d+-\d+-\d+)-(\d+-\d+-\d+)/);
+  const [date, time] = [parts[1], parts[2].replaceAll('-', ':')];
+  return Date.parse(date + ' ' + time);
+}
+
+function filesDateSorter(one, other) {
+  const oneDate = getDate(one);
+  const otherDate = getDate(other);
+  return oneDate > otherDate ? -1 : oneDate < otherDate ? 1 : 0;
+}
+
+function fmt(shot) {
+  const format = new Date(shot).toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  return format;
+}

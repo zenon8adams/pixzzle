@@ -1,0 +1,87 @@
+[
+  {
+    "background-color": "rgba(238,113,113,1)",
+    "background-gradient-direction": "horizontal",
+    "background-gradient-start": "rgba(238,113,113,1) 1%",
+    "background-gradient-end": "rgba(246,215,148,1) 58%"
+  },
+  {
+    "background-color": "#a1c4fd",
+    "background-gradient-direction": "horizontal",
+    "background-gradient-start": "#a1c4fd 0%",
+    "background-gradient-end": "#c2e9fb 100%"
+  },
+  {
+    "background-color": "#4facfe 0%",
+    "background-gradient-direction": "horizontal",
+    "background-gradient-start": "#4facfe 0%",
+    "background-gradient-end": "#00f2ff 100%"
+  },
+  {
+    "background-color": "#fa709a",
+    "background-gradient-direction": "horizontal",
+    "background-gradient-start": "#fa709a 0%",
+    "background-gradient-end": "#cc9b6c 100%"
+  },
+  {
+    "background-color": "#f5f7fa",
+    "background-gradient-direction": "vertical",
+    "background-gradient-start": "#b5d3ff 0%",
+    "background-gradient-end": "#8da4c9 100%"
+  },
+  {
+    "background-color": "#667eea",
+    "background-gradient-direction": "vertical",
+    "background-gradient-start": "#667eea 0%",
+    "background-gradient-end": "#8468ad 100%"
+  },
+  {
+    "background-color": "#d6b898",
+    "background-gradient-direction": "vertical",
+    "background-gradient-start": "#d6b898 0%",
+    "background-gradient-end": "#e2d1c3 100%"
+  },
+
+  {
+    "background-color": "#91abb3",
+    "background-gradient-direction": "horizontal",
+    "background-gradient-start": "#91abb3 0%",
+    "background-gradient-end": "#009efd 100%"
+  },
+  {
+    "background-color": "#6a11cb",
+    "background-gradient-direction": "horizontal",
+    "background-gradient-start": "#6a11cb 0%",
+    "background-gradient-end": "#3a09ad 100%"
+  },
+  {
+    "background-color": "#2f4e78",
+    "background-gradient-direction": "horizontal",
+    "background-gradient-start": "#2f4e78 0%",
+    "background-gradient-end": "#ace0f9 100%"
+  },
+  {
+    "background-color": "#6eba99",
+    "background-gradient-direction": "vertical",
+    "background-gradient-start": "#6eba99 0%",
+    "background-gradient-end": "#3cba92 100%"
+  },
+  {
+    "background-color": "#00c6fb",
+    "background-gradient-direction": "vertical",
+    "background-gradient-start": "#00c6fb 0%",
+    "background-gradient-end": "#3877d9 100%"
+  },
+  {
+    "background-color": "#a3bded",
+    "background-gradient-direction": "vertical",
+    "background-gradient-start": "#a3bded 0%",
+    "background-gradient-end": "#6991c7 100%"
+  },
+  {
+    "background-color": "#7028e4",
+    "background-gradient-direction": "vertical",
+    "background-gradient-start": "#7028e4 0%",
+    "background-gradient-end": "#a3588a 100%"
+  }
+]

@@ -3,9 +3,16 @@
       path="/org/gnome/shell/extensions/pixzzle/">
     <key name="toggle-visibility" type="as">
       <default><![CDATA[['<Ctrl>F9']]]></default>
-      <summary>Open screenshot</summary>
+      <summary>Open Viewer</summary>
       <description>
-        Key to open shutter
+        Command to open screenshot viewer
+      </description>
+    </key>
+    <key name="open-shutter" type="as">
+      <default><![CDATA[['<Ctrl>F10']]]></default>
+      <summary>Open screenshot tool</summary>
+      <description>
+        Command to open shutter
       </description>
     </key>
     <key name="rotate-shot-clockwise" type="as">
@@ -77,6 +84,14 @@
         Set the panning for the image viewer to
         the natural panning direction (i.e it should
         follow the drag direction).
+      </description>
+    </key>
+    <key name="ocr-api" type="s">
+      <default>'helloworld'</default>
+      <summary>Ocr-Space API Key</summary>
+      <description>    
+        Set your Ocr-Space API KEY to extend usage time
+        for your OCR needs (i.e Your image to text extraction).
       </description>
     </key>
   </schema>
