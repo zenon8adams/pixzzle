@@ -155,13 +155,21 @@ var UIOverlay = GObject.registerClass(
       Main.layoutManager.uiGroup.insert_child_at_index(this._stageOverlay, 0);
     }
 
+    _cycleFocus() {
+      this._focusButton = ((this._focusButton ?? 1) + 1) % 2;
+      this._modal._cycleFocus(this._focusButton);
+    }
+
     vfunc_key_press_event(event) {
       const symbol = event.keyval;
       if (symbol === Clutter.KEY_Return) {
-        this._modal.close(Dialog.ModalReply.OKAY);
+        this._modal.close(this._focusButton);
       } else if (symbol === Clutter.KEY_Escape) {
         this._modal.close(Dialog.ModalReply.CANCEL);
+      } else if (symbol === Clutter.KEY_Tab) {
+        this._cycleFocus();
       }
+
       return Clutter.EVENT_STOP;
     }
   }

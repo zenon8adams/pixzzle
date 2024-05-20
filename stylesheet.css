@@ -318,19 +318,19 @@
   padding: 0 10px 0 10px;
 }
 
-#UIDialog{
-    background-color: #fff;
-    padding: 0.4em 0.8em 0.8em 0.8em;
-    border-radius: 10px;
+#UIDialog {
+  background-color: #fff;
+  padding: 0.4em 0.8em 0.8em 0.8em;
+  border-radius: 10px;
 }
 .pixzzle-ui-dialog-container {
-    background-color: #00000000;
+  background-color: #00000000;
 }
 
 .pixzzle-ui-dialog-header-text {
-    font-size: 1.7em;
-    font-weight: 800;
-    color: #000; 
+  font-size: 1.7em;
+  font-weight: 800;
+  color: #000;
 }
 
 .pixzzle-ui-dialog-exit-button {
@@ -343,37 +343,98 @@
 }
 
 .pixzzle-ui-dialog-exit-button:hover {
-    border: 1px solid #959595;
+  border: 1px solid #959595;
 }
 
 .pixzzle-ui-dialog-separator {
-    margin-top: 1em;
-    margin-bottom: 0.7em;
-    background-color: #959595;
+  margin-top: 1em;
+  margin-bottom: 0.7em;
+  background-color: #959595;
 }
 
 .pixzzle-ui-dialog-accept-button {
-    background-color: #2167E8;
-    padding: 4px 14px;
-    color: #fff;
-    border-radius: 8px;
-    margin-right: 10px;
-    font-size: 14px;
+  background-color: #2167e8;
+  padding: 4px 14px;
+  color: #fff;
+  border-radius: 8px;
+  margin-right: 10px;
+  font-size: 14px;
 }
 
-.pixzzle-ui-dialog-accept-button:hover {
-    background-color: #1b55bf;
+.pixzzle-ui-dialog-accept-button:hover,
+.pixzzle-ui-dialog-accept-button.focus {
+  background-color: #1b55bf;
 }
 
 .pixzzle-ui-dialog-cancel-button {
-    background-color: #ff0000;
-    padding: 4px 14px;
-    color: #fff;
-    font-size: 14px;
-    border-radius: 8px;
+  background-color: #ff0000;
+  padding: 4px 14px;
+  color: #fff;
+  font-size: 14px;
+  border-radius: 8px;
 }
 
-.pixzzle-ui-dialog-cancel-button:hover {
-    background-color: #cf0404;
+.pixzzle-ui-dialog-cancel-button:hover,
+.pixzzle-ui-dialog-cancel-button.focus {
+  background-color: #cf0404;
 }
 
+#dockContainer.right,
+#dockContainer.shrink.right {
+  margin: 0;
+  padding: 0;
+}
+
+#dockContainer.right #dash,
+#dockContainer.shrink.right #dash {
+  margin: 4px;
+  margin-right: 0;
+  margin-left: 0;
+  padding: 0;
+}
+
+#dockContainer.right #dash .dash-background,
+#dockContainer.shrink.right #dash .dash-background {
+  margin: 0;
+  margin-right: 4px;
+  margin-left: 4px;
+  padding: 0;
+  border-radius: 16px;
+}
+
+#dockContainer.running-dots .app-well-app.focused .overview-icon,
+#dockContainer.dashtodock .app-well-app.focused .overview-icon {
+  background-color: rgba(238, 238, 236, 0.2);
+  border-radius: 17px;
+}
+
+#dockContainer.running-dots .app-well-app:hover .overview-icon,
+#dockContainer.dashtodock .app-well-app:hover .overview-icon {
+  background-color: rgba(238, 238, 236, 0.2);
+  border-radius: 17px;
+}
+
+#dockContainer.right #dash #dockContainer,
+#dockContainer.shrink.right #dash #dockContainer {
+  margin: 50%;
+  margin-right: 0;
+  margin-left: 0;
+  padding: 0;
+  spacing: 0;
+}
+
+#dockContainer.right #dash .dash-item-container,
+#dockContainer.shrink.right #dash .dash-item-container {
+  margin: 0;
+  margin-left: 4px;
+}
+
+#dockContainer.right #dash .dash-item-container .app-well-app,
+#dockContainer.right #dash .dash-item-container .show-apps,
+#dockContainer.shrink.right #dash .dash-item-container .app-well-app,
+#dockContainer.shrink.right #dash .dash-item-container .show-apps {
+  margin: 0;
+  padding: 0;
+  padding-right: 4px;
+  padding-left: 0px;
+}

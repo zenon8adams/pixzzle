@@ -140,7 +140,7 @@ var DockedDash = GObject.registerClass(
 
       super._init({
         ...params,
-        name: 'dashtodockContainer',
+        name: 'dockContainer',
         reactive: true,
         style_class: 'right',
         y_expand: false
@@ -350,7 +350,6 @@ var DockedDash = GObject.registerClass(
       this.y += Math.round(offset);
 
       this.dash._container.set_height(-1);
-      this.remove_style_class_name('extended');
 
       this._ready = true;
     }
