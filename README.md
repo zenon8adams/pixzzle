@@ -31,6 +31,7 @@ The following icon creators are attributed:
   * <a href="https://www.flaticon.com/free-icons/paste" title="paste icons">Paste icons created by Pixel perfect - Flaticon</a>
   * <a href="https://www.flaticon.com/free-icons/sections" title="sections icons">Sections icons created by Pixel perfect - Flaticon</a>
   * <a href="https://www.flaticon.com/free-icons/user-interface" title="user interface icons">User interface icons created by pojok d - Flaticon</a>
+  * <a href="https://www.flaticon.com/free-animated-icons/warning" title="warning animated icons">Warning animated icons created by Freepik - Flaticon</a>
 
 ## Contact Us
 Have questions or need support? Feel free to reach out at zenon8adams@gmail.com
