@@ -33,7 +33,6 @@ const {
 const Cairo = imports.cairo;
 const File = Gio.File;
 const Main = imports.ui.main;
-const GrabHelper = imports.ui.grabHelper;
 const MessageTray = imports.ui.messageTray;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
@@ -52,7 +51,8 @@ const {
   Constants
 } = Me.imports.utils;
 const { storeScreenshot } = Me.imports.common;
-const { UIShutter } = Me.imports.screenshot;
+const Shutter = Me.imports.screenshot;
+const Overlay = Me.imports.overlay;
 const { computePanelPosition } = Me.imports.panel;
 const Panel = computePanelPosition();
 const Prefs = Me.imports.prefs;
@@ -60,6 +60,7 @@ const { getActionWatcher } = Me.imports.watcher;
 const { Timer } = Me.imports.timer;
 const { UITooltip } = Me.imports.tooltip;
 const { UIImageRenderer } = Me.imports.renderer;
+const Dialog = Me.imports.dialog;
 const Docking = Me.imports.dock.docking;
 
 const INITIAL_WIDTH = 500;
@@ -114,15 +115,20 @@ var UIMainViewer = GObject.registerClass(
 
       Main.layoutManager.addChrome(this);
 
+      this._overlay = new Overlay.UIOverlay(this);
+
       /*
        * Watch for new modal dialog and hide viewer
        * when there's a change in the number of dialogs
        * visible as defined by `Main.modalCount`.
+       * If our modal is visible, don't hide viewer.
+       * FIXME: Disable watch when the modal is visible
+       * and re-enable once the modal is hidden.
        */
       const watcher = getActionWatcher(this).addWatch(MODAL_CHECK_INTERVAL, {
         reaction: this._close.bind(this, true /* instantly */),
         compare: (one, other) => one === other,
-        action: () => Main.modalCount
+        action: () => Main.modalCount * !this._overlay.visible
       });
 
       this.reset();
@@ -308,8 +314,9 @@ var UIMainViewer = GObject.registerClass(
       });
       this._folderView.connect('enter-event', this._stopDrag.bind(this));
 
-      this._thumbnailView = new UIThumbnailViewer(this._folderView, {
+      this._thumbnailView = new UIThumbnailViewer({
         name: 'UIThumbnailViewer',
+        sibling: this._folderView,
         x_expand: false,
         visible: true
       });
@@ -576,7 +583,7 @@ var UIMainViewer = GObject.registerClass(
 
     _showScreenshotView() {
       if (!this._shutter) {
-        this._shutter = new UIShutter();
+        this._shutter = new Shutter.UIShutter();
         this._shutterClosingHandler = this._shutter.connect(
           'begin-close',
           () => {
@@ -1003,6 +1010,7 @@ var UIMainViewer = GObject.registerClass(
         this._dock = null;
       }
 
+      //this._modal = null;
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
       this._unbindShortcuts();
@@ -1580,385 +1588,6 @@ const DNDTracker = GObject.registerClass(
   }
 );
 
-const UIThumbnailViewer = GObject.registerClass(
-  {
-    GTypeName: 'UIThumbnailViewer',
-    Signals: { replace: { param_types: [Object.prototype] } },
-    Properties: {
-      loaded: GObject.ParamSpec.boolean(
-        'loaded',
-        'loaded',
-        'loaded',
-        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
-        false,
-        true,
-        false
-      )
-    }
-  },
-  class UIThumbnailViewer extends UISideViewBase {
-    _init(sibling, params) {
-      super._init(params);
-
-      this._sibling = sibling;
-      this.connect('destroy', this._onDestroy.bind(this));
-    }
-
-    _initialize(payload, onComplete) {
-      if (!this._initialized) {
-        this._loadShots(payload)
-          .then(([shots, batch]) => {
-            this.emit('replace', shots[0] ?? {});
-            onComplete?.();
-            this._initialized = true;
-            this.notify('loaded');
-            this._streamBatch(batch);
-          })
-          .catch((err) => logError(err, 'Unable to load previous state'));
-      }
-    }
-
-    reload(shots, cb) {
-      this._initialized = false;
-      this._initialize(shots, cb);
-    }
-
-    _streamBatch(batch) {
-      this.cancelSubscriptions();
-      if (batch.length === 0) {
-        return;
-      }
-
-      const CHUNK = 4;
-      let index = 0;
-      this._batchId = GLib.timeout_add(
-        GLib.PRIORITY_DEFAULT,
-        300,
-        function () {
-          const next = batch.slice(index, index + CHUNK);
-          for (const shot of next) {
-            this._addShot(shot);
-          }
-          lg(
-            '[UIThumbnailViewer::_streamBatch::timeout_add]',
-            'index:',
-            index,
-            'current:',
-            next.length
-          );
-          index += next.length;
-          this._nextBatch = batch.slice(index);
-          if (next.length === 0) {
-            this.cancelSubscriptions();
-            return GLib.SOURCE_REMOVE;
-          }
-
-          return GLib.SOURCE_CONTINUE;
-        }.bind(this)
-      );
-      GLib.Source.set_name_by_id(
-        this._batchId,
-        '[pixzzle] UIThumbnailViewer._streamBatch'
-      );
-    }
-
-    cancelSubscriptions() {
-      if (this._batchId) {
-        GLib.source_remove(this._batchId);
-        this._batchId = null;
-      }
-    }
-
-    /**
-     * If there's a paused batching operation,
-     * resume it. A batch is a collection
-     * of shots that are yet to be added
-     * to the stage (ThumbnailViewer).
-     * When main window is hidden, we don't
-     * want any background actions running.
-     * Hiding the main window before some
-     * actions complete causes the view
-     * to have incomplete data. We continue
-     * with such operations.
-     */
-    activateSubscriptions() {
-      if (!this._nextBatch?.length) {
-        return;
-      }
-
-      this._streamBatch(this._nextBatch);
-    }
-
-    _maxVisibleShots() {
-      const sibling_extent = this._sibling.get_transformed_extents();
-      const this_extent = this.get_transformed_extents();
-      const isSiblingNaN = Number.isNaN(sibling_extent.get_height());
-      const isThisNaN = Number.isNaN(this_extent.get_height());
-      const sibling_height = isSiblingNaN
-        ? INITIAL_HEIGHT * 0.8
-        : sibling_extent.get_height();
-      const this_height = isThisNaN
-        ? INITIAL_HEIGHT * 0.8
-        : this_extent.get_height();
-
-      const effective_height = Math.max(this_height, sibling_height);
-      return Math.floor((effective_height * 2) / this.width);
-    }
-
-    _addShot(newShot, prepend) {
-      const shot = new UIPreview(newShot, this.width);
-      shot.connect('activate', (widget) => {
-        this.emit('replace', { name: widget._filename, widget: shot });
-      });
-      shot.connect('delete', (widget) => {
-        this._removeShot(shot).then((filename) => {
-          const nextShot = this._viewBox.get_child_at_index(0);
-          this.emit('replace', {
-            name: nextShot?._filename ?? null,
-            widget: nextShot
-          });
-          const name = GLib.path_get_basename(filename);
-          const thumbnail = GLib.build_filenamev([
-            getThumbnailsLocation().get_path(),
-            name
-          ]);
-
-          GLib.unlink(filename);
-          GLib.unlink(thumbnail);
-          this._sibling.removeShot(this._date, filename);
-
-          if (!nextShot) {
-            this.reload();
-          }
-        });
-      });
-
-      if (prepend) {
-        this._viewBox.insert_child_at_index(shot, 0);
-      } else {
-        this._viewBox.add_child(shot);
-      }
-
-      return { name: shot._filename, widget: shot };
-    }
-
-    _addNewShot(newShot) {
-      const shot = this._addShot(newShot.name, true /* prepend */);
-      this.emit('replace', { ...newShot, ...shot });
-    }
-
-    _switchActive(detail) {
-      const { current: filename, direction } = detail;
-      if (filename === null) {
-        return;
-      }
-
-      const shots = this._viewBox.get_children();
-      let next = -1;
-      for (let i = 0; i < shots.length; ++i) {
-        const shot = shots[i];
-        if (filename === shot._filename) {
-          next = i + direction;
-          next = (next < 0 ? next + shots.length : next) % shots.length;
-          break;
-        }
-      }
-      if (next === -1) {
-        return;
-      }
-
-      shots[next].emit('activate');
-    }
-
-    _shotCount() {
-      return this._viewBox.get_children().length;
-    }
-
-    async _removeShot(widget) {
-      return new Promise((resolve, reject) => {
-        widget.ease({
-          opacity: 0,
-          duration: 200,
-          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-          onComplete: () => {
-            const file = widget._filename;
-            this._viewBox.remove_actor(widget);
-            resolve(file);
-          }
-        });
-      });
-    }
-
-    async _loadShots(payload) {
-      this._viewBox.destroy_all_children();
-      const bundle = payload ?? (await this._sibling.latestShot());
-      lg('[UIThumbnailViewer::_loadShots]', 'payload:', bundle.shots.length);
-      this._is_flat = bundle.is_flat;
-      this._date = bundle.date;
-      const shots = [];
-      const section = bundle.shots.slice(0, this._maxVisibleShots());
-      lg(
-        '[UIThumbnailViewer::_loadShots]',
-        'number of initial thumbs:',
-        section.length,
-        'total number of shots:',
-        bundle.shots.length
-      );
-      for (const shot of section) {
-        shots.push(this._addShot(shot));
-      }
-      const newShotProps = bundle.nid;
-      if (newShotProps) {
-        this.emit('replace', { ...newShotProps, ...shots[0] });
-      }
-
-      const unloaded = bundle.shots.slice(section.length);
-
-      return [shots, unloaded];
-    }
-
-    get loading() {
-      return !this._initialized;
-    }
-
-    _onDestroy() {
-      this.cancelSubscriptions();
-    }
-  }
-);
-
-const UIPreview = GObject.registerClass(
-  { GTypeName: 'UIPreview', Signals: { activate: {}, delete: {} } },
-  class UIPreview extends St.Widget {
-    _init(filename, span, params) {
-      super._init({ ...params, y_expand: false });
-
-      this._surface = new St.Widget({ x_expand: false, y_expand: false });
-      this.add_child(this._surface);
-
-      const [thumbnail, actualFile] = this._getThumbnail(filename);
-      let pixbuf;
-      if (!thumbnail) {
-        const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
-        if (span > baseBuf.get_width() || span > baseBuf.get_height()) {
-          const aspectRatio = baseBuf.get_width() / baseBuf.get_height();
-          const scaledHeight = Math.max((span * 1.0) / aspectRatio, span);
-          pixbuf = baseBuf
-            .scale_simple(span, scaledHeight, GdkPixbuf.InterpType.BILINEAR)
-            .new_subpixbuf(0, 0, span - 1, span - 1);
-          pixbuf.set_option(TINY_IMAGE, 'true');
-        } else {
-          pixbuf = baseBuf.new_subpixbuf(0, 0, span - 1, span - 1);
-        }
-
-        this._saveThumbnail(pixbuf, actualFile);
-      } else {
-        pixbuf = GdkPixbuf.Pixbuf.new_from_file(actualFile);
-      }
-      const isTiny = pixbuf.get_option(TINY_IMAGE) === 'true';
-
-      if (isTiny) {
-        /*
-         * If original image is smaller than thumbnail,
-         * scale and blur the thumbnail.
-         */
-        this._surface.add_effect(
-          new Shell.BlurEffect({
-            brightness: Constants.FULLY_OPAQUE,
-            mode: Shell.BlurMode.ACTOR,
-            sigma: 2.5
-          })
-        );
-      }
-
-      this._filename = filename;
-      this._image = Clutter.Image.new();
-      this._image.set_data(
-        pixbuf.get_pixels(),
-        pixbuf.get_has_alpha()
-          ? Cogl.PixelFormat.RGBA_8888
-          : Cogl.PixelFormat.RGB_888,
-        pixbuf.get_width(),
-        pixbuf.get_height(),
-        pixbuf.get_rowstride()
-      );
-      this._surface.set_content(this._image);
-      this._surface.set_size(span, span);
-
-      this._trigger = new St.Button();
-      this.add_child(this._trigger);
-
-      this._trigger.add_constraint(
-        new Clutter.BindConstraint({
-          source: this,
-          coordinate: Clutter.BindCoordinate.WIDTH
-        })
-      );
-      this._trigger.add_constraint(
-        new Clutter.BindConstraint({
-          source: this,
-          coordinate: Clutter.BindCoordinate.HEIGHT
-        })
-      );
-      this._trigger.connect('clicked', () => {
-        lg('[UIPreview::_init::_trigger::clicked]');
-        this.emit('activate');
-      });
-
-      this._removeButton = new St.Button({
-        style_class: 'pixzzle-ui-thumbnail-close-button',
-        child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
-        x: 0,
-        y: 0
-      });
-      this._removeButton.add_constraint(
-        new Clutter.AlignConstraint({
-          source: this,
-          align_axis: Clutter.AlignAxis.X_AXIS,
-          pivot_point: new Graphene.Point({ x: 1, y: 0 }),
-          factor: 1
-        })
-      );
-      this._removeButton.add_constraint(
-        new Clutter.AlignConstraint({
-          source: this,
-          align_axis: Clutter.AlignAxis.Y_AXIS,
-          pivot_point: new Graphene.Point({ x: 0, y: 0 }),
-          factor: 0
-        })
-      );
-      this.add_child(this._removeButton);
-
-      this._removeButton.connect('clicked', () => {
-        lg('[UIPreview::_init::_closeButton::clicked]');
-        this.emit('delete');
-      });
-    }
-
-    _getThumbnail(filename) {
-      const dir = getThumbnailsLocation();
-      const base = GLib.path_get_basename(filename);
-      const thumbnail = GLib.build_filenamev([dir.get_path(), base]);
-      if (GLib.file_test(thumbnail, GLib.FileTest.EXISTS)) {
-        return [true, thumbnail];
-      }
-
-      return [false, thumbnail];
-    }
-
-    _saveThumbnail(image, filename) {
-      const file = Gio.File.new_for_path(filename);
-      const stream = file.create(Gio.FileCreateFlags.NONE, null);
-      image.save_to_streamv_async(stream, 'png', [], [], null, (_, task) => {
-        if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
-          return;
-        }
-        stream.close(null);
-      });
-    }
-  }
-);
-
 const UIFolderViewer = GObject.registerClass(
   {
     GTypeName: 'UIFolderViewer',
@@ -2213,8 +1842,7 @@ const UIFolder = GObject.registerClass(
     Signals: {
       activate: {
         param_types: [Object.prototype]
-      },
-      delete: {}
+      }
     }
   },
   class UIFolder extends St.Widget {
@@ -2253,6 +1881,431 @@ const UIFolder = GObject.registerClass(
           ''
         );
       }
+    }
+  }
+);
+
+const UIThumbnailViewer = GObject.registerClass(
+  {
+    GTypeName: 'UIThumbnailViewer',
+    Signals: { replace: { param_types: [Object.prototype] } },
+    Properties: {
+      loaded: GObject.ParamSpec.boolean(
+        'loaded',
+        'loaded',
+        'loaded',
+        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
+        false,
+        true,
+        false
+      ),
+      sibling: GObject.ParamSpec.object(
+        'sibling',
+        'sibling',
+        'sibling',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+        UIFolderViewer.$gtype
+      )
+    }
+  },
+  class UIThumbnailViewer extends UISideViewBase {
+    _init(params) {
+      super._init(params);
+
+      this.connect('destroy', this._onDestroy.bind(this));
+    }
+
+    _initialize(payload, onComplete) {
+      if (!this._initialized) {
+        this._loadShots(payload)
+          .then(([shots, batch]) => {
+            this.emit('replace', shots[0] ?? {});
+            onComplete?.();
+            this._initialized = true;
+            this.notify('loaded');
+            this._streamBatch(batch);
+          })
+          .catch((err) => logError(err, 'Unable to load previous state'));
+      }
+    }
+
+    reload(shots, cb) {
+      this._initialized = false;
+      this._initialize(shots, cb);
+    }
+
+    _streamBatch(batch) {
+      this.cancelSubscriptions();
+      if (batch.length === 0) {
+        return;
+      }
+
+      const CHUNK = 4;
+      let index = 0;
+      this._batchId = GLib.timeout_add(
+        GLib.PRIORITY_DEFAULT,
+        300,
+        function () {
+          const next = batch.slice(index, index + CHUNK);
+          for (const shot of next) {
+            this._addShot(shot);
+          }
+          lg(
+            '[UIThumbnailViewer::_streamBatch::timeout_add]',
+            'index:',
+            index,
+            'current:',
+            next.length
+          );
+          index += next.length;
+          this._nextBatch = batch.slice(index);
+          if (next.length === 0) {
+            this.cancelSubscriptions();
+            return GLib.SOURCE_REMOVE;
+          }
+
+          return GLib.SOURCE_CONTINUE;
+        }.bind(this)
+      );
+      GLib.Source.set_name_by_id(
+        this._batchId,
+        '[pixzzle] UIThumbnailViewer._streamBatch'
+      );
+    }
+
+    cancelSubscriptions() {
+      if (this._batchId) {
+        GLib.source_remove(this._batchId);
+        this._batchId = null;
+      }
+    }
+
+    /**
+     * If there's a paused batching operation,
+     * resume it. A batch is a collection
+     * of shots that are yet to be added
+     * to the stage (ThumbnailViewer).
+     * When main window is hidden, we don't
+     * want any background actions running.
+     * Hiding the main window before some
+     * actions complete causes the view
+     * to have incomplete data. We continue
+     * with such operations.
+     */
+    activateSubscriptions() {
+      if (!this._nextBatch?.length) {
+        return;
+      }
+
+      this._streamBatch(this._nextBatch);
+    }
+
+    _maxVisibleShots() {
+      const sibling_extent = this.sibling.get_transformed_extents();
+      const this_extent = this.get_transformed_extents();
+      const isSiblingNaN = Number.isNaN(sibling_extent.get_height());
+      const isThisNaN = Number.isNaN(this_extent.get_height());
+      const sibling_height = isSiblingNaN
+        ? INITIAL_HEIGHT * 0.8
+        : sibling_extent.get_height();
+      const this_height = isThisNaN
+        ? INITIAL_HEIGHT * 0.8
+        : this_extent.get_height();
+
+      const effective_height = Math.max(this_height, sibling_height);
+      return Math.floor((effective_height * 2) / this.width);
+    }
+
+    _addShot(newShot, prepend) {
+      const shot = new UIPreview(newShot, this.width);
+      shot.connect('activate', (widget) => {
+        this.emit('replace', { name: widget._filename, widget: shot });
+      });
+      shot.connect('delete', (widget, params) => {
+        const { permanently } = params;
+        if (permanently) {
+          this._confirmDelete(() => removeShot.bind(this)(permanently));
+        } else {
+          removeShot.bind(this)(permanently);
+        }
+      });
+
+      if (prepend) {
+        this._viewBox.insert_child_at_index(shot, 0);
+      } else {
+        this._viewBox.add_child(shot);
+      }
+
+      function removeShot(permanently) {
+        this._removeShot(shot).then((filename) => {
+          const nextShot = this._viewBox.get_child_at_index(0);
+          this.emit('replace', {
+            name: nextShot?._filename ?? null,
+            widget: nextShot
+          });
+          const name = GLib.path_get_basename(filename);
+          const thumbnail = GLib.build_filenamev([
+            getThumbnailsLocation().get_path(),
+            name
+          ]);
+
+          if (permanently) {
+            GLib.unlink(filename);
+            GLib.unlink(thumbnail);
+          }
+          this.sibling.removeShot(this._date, filename);
+
+          if (!nextShot) {
+            this.reload();
+          }
+        });
+      }
+
+      return { name: shot._filename, widget: shot };
+    }
+
+    _addNewShot(newShot) {
+      const shot = this._addShot(newShot.name, true /* prepend */);
+      this.emit('replace', { ...newShot, ...shot });
+    }
+
+    _confirmDelete(cb) {
+      Dialog.getDialog().display(
+        {
+          icon: {
+            icon_name: 'pixzzle-ui-warning-sprite.png',
+            animatable: true,
+            system_icon: false,
+            size: 36,
+            rate: 36
+          },
+          header: 'Warning',
+          prompt: 'Are you sure you want to delete picture permanently?',
+          tips:
+            '<b>Tip</b>: Press the <i><b>delete</b></i> key to temporarily ' +
+            'delete picture',
+          ok: 'Yes',
+          cancel: 'No'
+        },
+        (status) => {
+          if (status === Dialog.ModalReply.OKAY) {
+            cb();
+          }
+        }
+      );
+    }
+
+    _switchActive(detail) {
+      const { current: filename, direction } = detail;
+      if (filename === null) {
+        return;
+      }
+
+      const shots = this._viewBox.get_children();
+      let next = -1;
+      for (let i = 0; i < shots.length; ++i) {
+        const shot = shots[i];
+        if (filename === shot._filename) {
+          next = i + direction;
+          next = (next < 0 ? next + shots.length : next) % shots.length;
+          break;
+        }
+      }
+      if (next === -1) {
+        return;
+      }
+
+      shots[next].emit('activate');
+    }
+
+    _shotCount() {
+      return this._viewBox.get_children().length;
+    }
+
+    async _removeShot(widget) {
+      return new Promise((resolve, reject) => {
+        widget.ease({
+          opacity: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => {
+            const file = widget._filename;
+            this._viewBox.remove_actor(widget);
+            resolve(file);
+          }
+        });
+      });
+    }
+
+    async _loadShots(payload) {
+      this._viewBox.destroy_all_children();
+      const bundle = payload ?? (await this.sibling.latestShot());
+      lg('[UIThumbnailViewer::_loadShots]', 'payload:', bundle.shots.length);
+      this._is_flat = bundle.is_flat;
+      this._date = bundle.date;
+      const shots = [];
+      const section = bundle.shots.slice(0, this._maxVisibleShots());
+      lg(
+        '[UIThumbnailViewer::_loadShots]',
+        'number of initial thumbs:',
+        section.length,
+        'total number of shots:',
+        bundle.shots.length
+      );
+      for (const shot of section) {
+        shots.push(this._addShot(shot));
+      }
+      const newShotProps = bundle.nid;
+      if (newShotProps) {
+        this.emit('replace', { ...newShotProps, ...shots[0] });
+      }
+
+      const unloaded = bundle.shots.slice(section.length);
+
+      return [shots, unloaded];
+    }
+
+    get loading() {
+      return !this._initialized;
+    }
+
+    _onDestroy() {
+      this.cancelSubscriptions();
+    }
+  }
+);
+
+const UIPreview = GObject.registerClass(
+  {
+    GTypeName: 'UIPreview',
+    Signals: { activate: {}, delete: { param_types: [Object.prototype] } }
+  },
+  class UIPreview extends St.Widget {
+    _init(filename, span, params) {
+      super._init({ ...params, y_expand: false });
+
+      this._surface = new St.Widget({ x_expand: false, y_expand: false });
+      this.add_child(this._surface);
+
+      const [thumbnail, actualFile] = this._getThumbnail(filename);
+      let pixbuf;
+      if (!thumbnail) {
+        const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
+        if (span > baseBuf.get_width() || span > baseBuf.get_height()) {
+          const aspectRatio = baseBuf.get_width() / baseBuf.get_height();
+          const scaledHeight = Math.max((span * 1.0) / aspectRatio, span);
+          pixbuf = baseBuf
+            .scale_simple(span, scaledHeight, GdkPixbuf.InterpType.BILINEAR)
+            .new_subpixbuf(0, 0, span - 1, span - 1);
+          pixbuf.set_option(TINY_IMAGE, 'true');
+        } else {
+          pixbuf = baseBuf.new_subpixbuf(0, 0, span - 1, span - 1);
+        }
+
+        this._saveThumbnail(pixbuf, actualFile);
+      } else {
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(actualFile);
+      }
+      const isTiny = pixbuf.get_option(TINY_IMAGE) === 'true';
+
+      if (isTiny) {
+        /*
+         * If original image is smaller than thumbnail,
+         * scale and blur the thumbnail.
+         */
+        this._surface.add_effect(
+          new Shell.BlurEffect({
+            brightness: Constants.FULLY_OPAQUE,
+            mode: Shell.BlurMode.ACTOR,
+            sigma: 2.5
+          })
+        );
+      }
+
+      this._filename = filename;
+      this._image = Clutter.Image.new();
+      this._image.set_data(
+        pixbuf.get_pixels(),
+        pixbuf.get_has_alpha()
+          ? Cogl.PixelFormat.RGBA_8888
+          : Cogl.PixelFormat.RGB_888,
+        pixbuf.get_width(),
+        pixbuf.get_height(),
+        pixbuf.get_rowstride()
+      );
+      this._surface.set_content(this._image);
+      this._surface.set_size(span, span);
+
+      this._trigger = new St.Button();
+      this.add_child(this._trigger);
+
+      this._trigger.add_constraint(
+        new Clutter.BindConstraint({
+          source: this,
+          coordinate: Clutter.BindCoordinate.WIDTH
+        })
+      );
+      this._trigger.add_constraint(
+        new Clutter.BindConstraint({
+          source: this,
+          coordinate: Clutter.BindCoordinate.HEIGHT
+        })
+      );
+      this._trigger.connect('clicked', () => {
+        lg('[UIPreview::_init::_trigger::clicked]');
+        this.emit('activate');
+      });
+
+      this._removeButton = new St.Button({
+        style_class: 'pixzzle-ui-thumbnail-close-button',
+        child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
+        x: 0,
+        y: 0
+      });
+      this._removeButton.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this,
+          align_axis: Clutter.AlignAxis.X_AXIS,
+          pivot_point: new Graphene.Point({ x: 1, y: 0 }),
+          factor: 1
+        })
+      );
+      this._removeButton.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this,
+          align_axis: Clutter.AlignAxis.Y_AXIS,
+          pivot_point: new Graphene.Point({ x: 0, y: 0 }),
+          factor: 0
+        })
+      );
+      this.add_child(this._removeButton);
+
+      this._removeButton.connect('clicked', () => {
+        lg('[UIPreview::_init::_closeButton::clicked]');
+        this.emit('delete', {});
+      });
+    }
+
+    _getThumbnail(filename) {
+      const dir = getThumbnailsLocation();
+      const base = GLib.path_get_basename(filename);
+      const thumbnail = GLib.build_filenamev([dir.get_path(), base]);
+      if (GLib.file_test(thumbnail, GLib.FileTest.EXISTS)) {
+        return [true, thumbnail];
+      }
+
+      return [false, thumbnail];
+    }
+
+    _saveThumbnail(image, filename) {
+      const file = Gio.File.new_for_path(filename);
+      const stream = file.create(Gio.FileCreateFlags.NONE, null);
+      image.save_to_streamv_async(stream, 'png', [], [], null, (_, task) => {
+        if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
+          return;
+        }
+        stream.close(null);
+      });
     }
   }
 );
