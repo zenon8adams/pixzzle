@@ -709,7 +709,10 @@ var UIImageRenderer = GObject.registerClass(
           'file to be deleted:',
           this._shotWidget?._filename
         );
-        this._shotWidget?.emit('delete');
+        const permanently = !!(
+          event.modifier_state & Clutter.ModifierType.SHIFT_MASK
+        );
+        this._shotWidget?.emit('delete', { permanently });
         return Clutter.EVENT_STOP;
       } else if (symbol === Clutter.KEY_Left) {
         this.emit('switch-active', {
