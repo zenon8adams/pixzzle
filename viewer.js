@@ -457,10 +457,6 @@ var UIMainViewer = GObject.registerClass(
           this._updateDockPosition();
         }
 
-        if (!this.visible) {
-          this._thumbnailView.cancelSubscriptions();
-          return;
-        }
         this._animateSettings();
 
         // Run only once for the lifetime of the
@@ -468,8 +464,6 @@ var UIMainViewer = GObject.registerClass(
         if (!this._viewInitialized) {
           this._folderView.flatten();
           this._viewInitialized = true;
-        } else {
-          this._thumbnailView.activateSubscriptions();
         }
       });
 
@@ -695,25 +689,12 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _toggleSwap(widget) {
-      const correction = this._heightDiff ? this._heightDiff : 0;
-      const extent = this._swapViewContainer.height - correction;
-      lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
       this._animateSwap();
       // folder hidden
       if (widget.checked) {
-        this._crossSlideAnimate(
-          this._folderView,
-          this._thumbnailView,
-          extent,
-          correction
-        );
+        this._crossSlideAnimate(this._folderView, this._thumbnailView);
       } else {
-        this._crossSlideAnimate(
-          this._thumbnailView,
-          this._folderView,
-          extent,
-          correction
-        );
+        this._crossSlideAnimate(this._thumbnailView, this._folderView);
       }
 
       if (!this._meltButton.visible) {
@@ -735,7 +716,7 @@ var UIMainViewer = GObject.registerClass(
       }
     }
 
-    _crossSlideAnimate(one, other, extent, correction) {
+    _crossSlideAnimate(one, other) {
       /*
        * Changing the height of an actor also
        * changes its minimum height. If we intend
@@ -751,22 +732,15 @@ var UIMainViewer = GObject.registerClass(
       one.visible = true;
       one.height = 0;
       one.ease({
-        height: extent,
+        height: other.height,
         duration: 300,
-        mode: Clutter.AnimationMode.EASE_IN_OUT,
-        onComplete: () => {
-          one.min_height = 0;
-        }
+        mode: Clutter.AnimationMode.EASE_IN_OUT
       });
-      other.height -= correction;
       other.ease({
         height: 0,
         duration: 300,
         mode: Clutter.AnimationMode.EASE_IN_OUT,
-        onComplete: () => {
-          other.visible = false;
-          other.min_height = 0;
-        }
+        onComplete: () => (other.visible = false)
       });
     }
 
@@ -1112,12 +1086,22 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _updateSize() {
-      this._heightDiff = this.height;
-
+      lg('[UIMainViewer::_updateSize]');
       const [x, y, w, h] = this._getGeometry();
-      this._setRect(x, y, w, h);
 
-      this._heightDiff -= this.height;
+      const diff = Math.abs(this.height - h);
+      this._updateSideBarHeight(diff);
+      this._setRect(x, y, w, h);
+    }
+
+    _updateSideBarHeight(diff) {
+      if (this._viewInitialized && diff > 0) {
+        if (this._folderView.visible) {
+          this._folderView.height = diff;
+        } else if (this._thumbnailView.visible) {
+          this._thumbnailView.height = diff;
+        }
+      }
     }
 
     _setRect(x, y, w, h) {
@@ -1681,15 +1665,15 @@ const UIFolderViewer = GObject.registerClass(
     }
 
     _clearEmptyGroups() {
-        for(let i = 0; i < this._shotsDate.length; ) {
-            const date = this._shotsDate[i];
-            if(!this._shotGroups[date]) {
-                delete this._shotGroups[date];
-                this._shotsDate.splice(i, 1);
-            } else {
-                ++i;
-            }
+      for (let i = 0; i < this._shotsDate.length; ) {
+        const date = this._shotsDate[i];
+        if (!this._shotGroups[date]) {
+          delete this._shotGroups[date];
+          this._shotsDate.splice(i, 1);
+        } else {
+          ++i;
         }
+      }
     }
 
     removeShot(date, shot) {
@@ -1919,19 +1903,16 @@ const UIThumbnailViewer = GObject.registerClass(
   class UIThumbnailViewer extends UISideViewBase {
     _init(params) {
       super._init(params);
-
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _initialize(payload, onComplete) {
       if (!this._initialized) {
         this._loadShots(payload)
-          .then(([shots, batch]) => {
+          .then((shots) => {
             this.emit('replace', shots[0] ?? {});
             onComplete?.();
             this._initialized = true;
             this.notify('loaded');
-            this._streamBatch(batch);
           })
           .catch((err) => logError(err, 'Unable to load previous state'));
       }
@@ -1940,88 +1921,6 @@ const UIThumbnailViewer = GObject.registerClass(
     reload(shots, cb) {
       this._initialized = false;
       this._initialize(shots, cb);
-    }
-
-    _streamBatch(batch) {
-      this.cancelSubscriptions();
-      if (batch.length === 0) {
-        return;
-      }
-
-      const CHUNK = 4;
-      let index = 0;
-      this._batchId = GLib.timeout_add(
-        GLib.PRIORITY_DEFAULT,
-        300,
-        function () {
-          const next = batch.slice(index, index + CHUNK);
-          for (const shot of next) {
-            this._addShot(shot);
-          }
-          lg(
-            '[UIThumbnailViewer::_streamBatch::timeout_add]',
-            'index:',
-            index,
-            'current:',
-            next.length
-          );
-          index += next.length;
-          this._nextBatch = batch.slice(index);
-          if (next.length === 0) {
-            this.cancelSubscriptions();
-            return GLib.SOURCE_REMOVE;
-          }
-
-          return GLib.SOURCE_CONTINUE;
-        }.bind(this)
-      );
-      GLib.Source.set_name_by_id(
-        this._batchId,
-        '[pixzzle] UIThumbnailViewer._streamBatch'
-      );
-    }
-
-    cancelSubscriptions() {
-      if (this._batchId) {
-        GLib.source_remove(this._batchId);
-        this._batchId = null;
-      }
-    }
-
-    /**
-     * If there's a paused batching operation,
-     * resume it. A batch is a collection
-     * of shots that are yet to be added
-     * to the stage (ThumbnailViewer).
-     * When main window is hidden, we don't
-     * want any background actions running.
-     * Hiding the main window before some
-     * actions complete causes the view
-     * to have incomplete data. We continue
-     * with such operations.
-     */
-    activateSubscriptions() {
-      if (!this._nextBatch?.length) {
-        return;
-      }
-
-      this._streamBatch(this._nextBatch);
-    }
-
-    _maxVisibleShots() {
-      const sibling_extent = this.sibling.get_transformed_extents();
-      const this_extent = this.get_transformed_extents();
-      const isSiblingNaN = Number.isNaN(sibling_extent.get_height());
-      const isThisNaN = Number.isNaN(this_extent.get_height());
-      const sibling_height = isSiblingNaN
-        ? INITIAL_HEIGHT * 0.8
-        : sibling_extent.get_height();
-      const this_height = isThisNaN
-        ? INITIAL_HEIGHT * 0.8
-        : this_extent.get_height();
-
-      const effective_height = Math.max(this_height, sibling_height);
-      return Math.floor((effective_height * 2) / this.width);
     }
 
     _addShot(newShot, prepend) {
@@ -2156,15 +2055,7 @@ const UIThumbnailViewer = GObject.registerClass(
       this._is_flat = bundle.is_flat;
       this._date = bundle.date;
       const shots = [];
-      const section = bundle.shots.slice(0, this._maxVisibleShots());
-      lg(
-        '[UIThumbnailViewer::_loadShots]',
-        'number of initial thumbs:',
-        section.length,
-        'total number of shots:',
-        bundle.shots.length
-      );
-      for (const shot of section) {
+      for (const shot of bundle.shots) {
         shots.push(this._addShot(shot));
       }
       const newShotProps = bundle.nid;
@@ -2172,17 +2063,11 @@ const UIThumbnailViewer = GObject.registerClass(
         this.emit('replace', { ...newShotProps, ...shots[0] });
       }
 
-      const unloaded = bundle.shots.slice(section.length);
-
-      return [shots, unloaded];
+      return shots;
     }
 
     get loading() {
       return !this._initialized;
-    }
-
-    _onDestroy() {
-      this.cancelSubscriptions();
     }
   }
 );
