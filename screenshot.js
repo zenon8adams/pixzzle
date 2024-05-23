@@ -930,15 +930,15 @@ var UIShutter = GObject.registerClass(
         })
       );
 
-      this.screenshotUIGroup = new St.Widget({
+      this._screenshotUIGroup = new St.Widget({
         name: 'screenshotUIGroup',
         layout_manager: new Clutter.BinLayout()
       });
-      Main.layoutManager.addTopChrome(this.screenshotUIGroup);
+      Main.layoutManager.addTopChrome(this._screenshotUIGroup);
 
-      this.screenshotUIGroup.add_child(this._stageScreenshotContainer);
+      this._screenshotUIGroup.add_child(this._stageScreenshotContainer);
 
-      this.screenshotUIGroup.add_child(this);
+      this._screenshotUIGroup.add_child(this);
 
       this._stageScreenshot = new St.Widget({
         style_class: 'pixzzle-ui-screen-screenshot'
@@ -1185,6 +1185,7 @@ var UIShutter = GObject.registerClass(
     _onDestroy() {
       Main.sessionMode.disconnect(this.sessionUpdateID);
       Main.layoutManager.disconnect(this.monitorChangeID);
+      Main.layoutManager.removeChrome(this._screenshotUIGroup);
       if (this._timeoutId) {
         GLib.Source.remove(this._timeoutId);
         this._timeoutId = null;

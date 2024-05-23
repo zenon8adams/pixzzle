@@ -125,7 +125,7 @@ var UIMainViewer = GObject.registerClass(
        * FIXME: Disable watch when the modal is visible
        * and re-enable once the modal is hidden.
        */
-      const watcher = getActionWatcher(this).addWatch(MODAL_CHECK_INTERVAL, {
+      this._watcher = getActionWatcher().addWatch(MODAL_CHECK_INTERVAL, {
         reaction: this._close.bind(this, true /* instantly */),
         compare: (one, other) => one === other,
         action: () => Main.modalCount * !this._overlay.visible
@@ -241,10 +241,6 @@ var UIMainViewer = GObject.registerClass(
         style_class: 'pixzzle-ui-tooltip',
         visible: false
       });
-      this.connect('destroy', () => {
-        Main.uiGroup.remove_actor(this._settingsButtonTooltip);
-        this._settingsButtonTooltip.destroy();
-      });
       Main.uiGroup.add_child(this._settingsButtonTooltip);
 
       this._thumbnailControls = new UILayout({
@@ -285,10 +281,6 @@ var UIMainViewer = GObject.registerClass(
         text: _('Show/Hide group'),
         style_class: 'pixzzle-ui-tooltip',
         visible: false
-      });
-      this.connect('destroy', () => {
-        Main.uiGroup.remove_actor(this._swapButtonTooltip);
-        this._swapButtonTooltip.destroy();
       });
 
       Main.uiGroup.add_child(this._swapButtonTooltip);
@@ -998,6 +990,8 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _onDestroy() {
+      this._watcher.destroy();
+      this._watcher = null;
       if (this._shutter) {
         this._shutter.disconnect(this._shutterClosingHandler);
         this._shutter.disconnect(this._shutterNewShotHandler);
@@ -1005,14 +999,13 @@ var UIMainViewer = GObject.registerClass(
         this._shutter = null;
       }
 
-      if (this._dock) {
-        this._dock.destroy();
-        this._dock = null;
-      }
-
-      //this._modal = null;
+      this._dock = null;
+      Main.uiGroup.remove_actor(this._settingsButtonTooltip);
+      Main.uiGroup.remove_actor(this._swapButtonTooltip);
       Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
+      this._settingsButtonTooltip.destroy();
+      this._swapButtonTooltip.destroy();
       this._unbindShortcuts();
     }
 
@@ -1637,6 +1630,7 @@ const UIFolderViewer = GObject.registerClass(
     }
 
     async latestShot() {
+      lg('[UIFolderViewer::latestShot]');
       if (!this._shotGroups) {
         await this._loadShots();
       }
@@ -1646,6 +1640,8 @@ const UIFolderViewer = GObject.registerClass(
         return { shots: this._shotGroups[today], date: today };
       }
 
+      lg('[UIFolderViewer::latestShot] shot dates:', this._shotsDate);
+      this._clearEmptyGroups();
       const date = this._shotsDate[0];
       if (this._shotGroups[date]) {
         return { shots: this._shotGroups[date], date };
@@ -1682,6 +1678,18 @@ const UIFolderViewer = GObject.registerClass(
         const folder = this._viewBox.get_child_at_index(0);
         folder.emit('activate', { nid: newShot });
       }
+    }
+
+    _clearEmptyGroups() {
+        for(let i = 0; i < this._shotsDate.length; ) {
+            const date = this._shotsDate[i];
+            if(!this._shotGroups[date]) {
+                delete this._shotGroups[date];
+                this._shotsDate.splice(i, 1);
+            } else {
+                ++i;
+            }
+        }
     }
 
     removeShot(date, shot) {
@@ -2039,6 +2047,10 @@ const UIThumbnailViewer = GObject.registerClass(
       function removeShot(permanently) {
         this._removeShot(shot).then((filename) => {
           const nextShot = this._viewBox.get_child_at_index(0);
+          lg(
+            '[UIThumbnailViewer::_addShot::removeShot] nextShot:',
+            nextShot?._filename
+          );
           this.emit('replace', {
             name: nextShot?._filename ?? null,
             widget: nextShot

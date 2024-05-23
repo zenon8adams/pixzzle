@@ -240,6 +240,7 @@ var DockDash = GObject.registerClass(
     _onDestroy() {
       if (this._requiresVisibilityTimeout)
         GLib.source_remove(this._requiresVisibilityTimeout);
+      this.pauseAnimation();
     }
 
     _hookUpLabel() {

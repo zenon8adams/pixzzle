@@ -256,8 +256,6 @@ var UIDialog = GObject.registerClass(
         this._timeoutId = null;
       }
       _modalDialog = null;
-
-      Main.layoutManager.removeChrome(this);
     }
 
     vfunc_key_press_event(event) {
