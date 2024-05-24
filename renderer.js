@@ -74,11 +74,11 @@ var UIImageRenderer = GObject.registerClass(
         can_focus: true,
         layout_manager: new Clutter.BinLayout()
       });
+      this._xpos = 0;
+      this._ypos = 0;
 
       this._canvas = new Clutter.Canvas();
       this.set_content(this._canvas);
-      this._xpos = 0;
-      this._ypos = 0;
       this._orientationLU = new Array(N_AXIS);
       this._orientation = ViewOrientation.TOP;
       this._snipIndicator = new St.Widget({
@@ -108,70 +108,7 @@ var UIImageRenderer = GObject.registerClass(
       };
       this._snipTrigger = null;
 
-      this._canvas.connect('draw', (canvas, context) => {
-        if (this._pixbuf && this._filename) {
-          const [pixWidth, pixHeight] = [
-            this._pixbuf.get_width(),
-            this._pixbuf.get_height()
-          ];
-
-          const [maxWidth, maxHeight] = this._getMaxSize();
-          const [effectiveWidth, effectiveHeight] = [
-            Math.min(pixWidth - this._xpos, maxWidth),
-            Math.min(pixHeight - this._ypos, maxHeight)
-          ];
-          lg(
-            '[UIImageRenderer::_init::_draw] effectiveWidth:',
-            effectiveWidth,
-            'effectiveHeight:',
-            effectiveHeight
-          );
-          const pixbuf = this._pixbuf.new_subpixbuf(
-            this._xpos,
-            this._ypos,
-            effectiveWidth,
-            effectiveHeight
-          );
-          if (pixbuf === null) {
-            lg('[UIImageRenderer::_init::_draw]', 'pixbuf = (null)');
-            return;
-          }
-          this._visibleRegionPixbuf = pixbuf;
-
-          context.save();
-          context.setOperator(Cairo.Operator.CLEAR);
-          context.paint();
-          context.restore();
-          cairo_set_source_pixbuf(
-            context,
-            pixbuf,
-            (maxWidth - effectiveWidth) / 2,
-            (maxHeight - effectiveHeight) / 2
-          );
-          context.paint();
-
-          /*
-           * For a new screenshot, this._ocrScanOnEntry
-           * flag indicates that we want to perform
-           * ocr scan immediately we screenshot the
-           * image.
-           */
-          if (this._ocrScanOnEntry) {
-            this._ocrScanOnEntry = false;
-            this._openSnipToolkit();
-            this._snipIndicator.x = (maxWidth - pixbuf.width) / 2;
-            this._snipIndicator.y = (maxHeight - pixbuf.height) / 2;
-            this._snipIndicator.width = this._pixbuf.width;
-            this._snipIndicator.height = this._pixbuf.height;
-            this._doOCR(this._pixbuf);
-          }
-        } else if (this._filename) {
-          context.save();
-          context.setOperator(Cairo.Operator.CLEAR);
-          context.paint();
-          this._filename = null;
-        }
-      });
+      this._canvas.connect('draw', this._draw.bind(this));
     }
 
     _redraw(deltaX, deltaY) {
@@ -181,6 +118,71 @@ var UIImageRenderer = GObject.registerClass(
       } else {
         this._isPanningEnabled = false;
         this._closeSnipToolkit();
+      }
+    }
+
+    _draw(canvas, context) {
+      if (this._pixbuf && this._filename) {
+        const [pixWidth, pixHeight] = [
+          this._pixbuf.get_width(),
+          this._pixbuf.get_height()
+        ];
+
+        const [maxWidth, maxHeight] = this._getMaxSize();
+        const [effectiveWidth, effectiveHeight] = [
+          Math.min(pixWidth - this._xpos, maxWidth),
+          Math.min(pixHeight - this._ypos, maxHeight)
+        ];
+        lg(
+          '[UIImageRenderer::_init::_draw] effectiveWidth:',
+          effectiveWidth,
+          'effectiveHeight:',
+          effectiveHeight
+        );
+        const pixbuf = this._pixbuf.new_subpixbuf(
+          this._xpos,
+          this._ypos,
+          effectiveWidth,
+          effectiveHeight
+        );
+        if (pixbuf === null) {
+          lg('[UIImageRenderer::_init::_draw]', 'pixbuf = (null)');
+          return;
+        }
+        this._visibleRegionPixbuf = pixbuf;
+
+        context.save();
+        context.setOperator(Cairo.Operator.CLEAR);
+        context.paint();
+        context.restore();
+        cairo_set_source_pixbuf(
+          context,
+          pixbuf,
+          (maxWidth - effectiveWidth) / 2,
+          (maxHeight - effectiveHeight) / 2
+        );
+        context.paint();
+
+        /*
+         * For a new screenshot, this._ocrScanOnEntry
+         * flag indicates that we want to perform
+         * ocr scan immediately we screenshot the
+         * image.
+         */
+        if (this._ocrScanOnEntry) {
+          this._ocrScanOnEntry = false;
+          this._openSnipToolkit();
+          this._snipIndicator.x = (maxWidth - pixbuf.width) / 2;
+          this._snipIndicator.y = (maxHeight - pixbuf.height) / 2;
+          this._snipIndicator.width = this._pixbuf.width;
+          this._snipIndicator.height = this._pixbuf.height;
+          this._doOCR(this._pixbuf);
+        }
+      } else if (this._filename) {
+        context.save();
+        context.setOperator(Cairo.Operator.CLEAR);
+        context.paint();
+        this._filename = null;
       }
     }
 

@@ -1905,6 +1905,11 @@ const UIThumbnailViewer = GObject.registerClass(
           onComplete: () => {
             const file = widget._filename;
             this._viewBox.remove_actor(widget);
+            /*
+             * Notify the viewBox that we have removed
+             * a child and redraw.
+             */
+            this._viewBox.queue_relayout();
             resolve(file);
           }
         });
