@@ -77,12 +77,6 @@ const MODAL_CHECK_INTERVAL = 300;
  */
 const TINY_IMAGE = 'tINy';
 
-let SETTING_DISABLE_TILE_MODE;
-
-const ViewMode = Object.freeze({
-  ADAPTIVE: Symbol('adaptive'),
-  TILE: Symbol('tile')
-});
 var UIMainViewer = GObject.registerClass(
   {
     Signals: { 'drag-started': {}, 'drag-ended': {} }
@@ -109,8 +103,6 @@ var UIMainViewer = GObject.registerClass(
       this._lastY = 0;
 
       this._isActive = false;
-      this._viewMode = ViewMode.ADAPTIVE;
-      this._tilingDisabled = false;
       this._emptyView = true;
       this._isFlattened = new GBoolean(true);
 
@@ -126,7 +118,7 @@ var UIMainViewer = GObject.registerClass(
        * FIXME: Disable watch when the modal is visible
        * and re-enable once the modal is hidden.
        */
-      const watcher = getActionWatcher(this).addWatch(MODAL_CHECK_INTERVAL, {
+      this._watcher = getActionWatcher().addWatch(MODAL_CHECK_INTERVAL, {
         reaction: this._close.bind(this, true /* instantly */),
         compare: (one, other) => one === other,
         action: () => Main.modalCount * !this._overlay.visible
@@ -207,7 +199,7 @@ var UIMainViewer = GObject.registerClass(
       this._bigViewContainer = new UILayout({
         name: 'UIBigViewLayout',
         x_expand: true,
-        y_expand: false,
+        y_expand: true,
         x_align: Clutter.ActorAlign.CENTER,
         y_align: Clutter.ActorAlign.CENTER
       });
@@ -222,7 +214,9 @@ var UIMainViewer = GObject.registerClass(
 
       this._settingsButton = new UIButton({
         style_class: 'pixzzle-ui-settings-button',
-        child: new St.Icon({ icon_name: 'org.gnome.Settings-symbolic' }),
+        child: new St.Icon({
+          icon_name: 'org.gnome.Settings-symbolic'
+        }),
         x_expand: false,
         reactive: true,
         x_align: Clutter.ActorAlign.CENTER,
@@ -241,10 +235,6 @@ var UIMainViewer = GObject.registerClass(
         text: _('Open settings'),
         style_class: 'pixzzle-ui-tooltip',
         visible: false
-      });
-      this.connect('destroy', () => {
-        Main.uiGroup.remove_actor(this._settingsButtonTooltip);
-        this._settingsButtonTooltip.destroy();
       });
       Main.uiGroup.add_child(this._settingsButtonTooltip);
 
@@ -287,10 +277,6 @@ var UIMainViewer = GObject.registerClass(
         style_class: 'pixzzle-ui-tooltip',
         visible: false
       });
-      this.connect('destroy', () => {
-        Main.uiGroup.remove_actor(this._swapButtonTooltip);
-        this._swapButtonTooltip.destroy();
-      });
 
       Main.uiGroup.add_child(this._swapButtonTooltip);
       this._buttonBox.add_child(this._thumbnailControls);
@@ -322,7 +308,9 @@ var UIMainViewer = GObject.registerClass(
         visible: true
       });
 
-      this._imageViewer = new UIImageRenderer(this);
+      this._imageViewer = new UIImageRenderer({
+        anchor: this
+      });
       this._dock = new Docking.DockedDash({ docker: this._imageViewer });
       this._thumbnailView.connect('replace', (_, shot) => {
         this._imageViewer._replace(shot);
@@ -379,10 +367,6 @@ var UIMainViewer = GObject.registerClass(
       });
 
       this._imageViewer.connect('lock-axis', (_, axis) => {
-        if (this._viewMode !== ViewMode.ADAPTIVE) {
-          return;
-        }
-
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
         /*
@@ -432,7 +416,6 @@ var UIMainViewer = GObject.registerClass(
         if (xOffset > 0) this._startX += xOffset;
         if (yOffset > 0) this._startY += yOffset;
 
-        this._viewMode = ViewMode.ADAPTIVE;
         this._updateSize();
         this._emptyView = true;
       });
@@ -449,14 +432,6 @@ var UIMainViewer = GObject.registerClass(
       });
       this._bigViewContainer.add_child(this._imageViewer);
 
-      this._snapIndicator = new St.Widget({
-        style_class: 'pixzzle-ui-snap-indicator',
-        visible: true,
-        y_expand: true,
-        x_expand: true
-      });
-      Main.layoutManager.addChrome(this._snapIndicator);
-
       this._loadSettings();
       this.add_child(this._dock);
 
@@ -466,10 +441,6 @@ var UIMainViewer = GObject.registerClass(
           this._updateDockPosition();
         }
 
-        if (!this.visible) {
-          this._thumbnailView.cancelSubscriptions();
-          return;
-        }
         this._animateSettings();
 
         // Run only once for the lifetime of the
@@ -477,8 +448,6 @@ var UIMainViewer = GObject.registerClass(
         if (!this._viewInitialized) {
           this._folderView.flatten();
           this._viewInitialized = true;
-        } else {
-          this._thumbnailView.activateSubscriptions();
         }
       });
 
@@ -494,58 +463,6 @@ var UIMainViewer = GObject.registerClass(
         width: w,
         height: h
       });
-    }
-
-    _updateSnapIndicator(x, y, w, h) {
-      if (!this._adaptiveGeometry || this._viewMode === ViewMode.ADAPTIVE) {
-        this._adaptiveGeometry = [
-          this._startX,
-          this._startY,
-          this._lastX,
-          this._lastY
-        ];
-      }
-
-      if (x === 0 && y === 0 && w === 0 && h === 0) {
-        this._snapIndicator.hide();
-      } else {
-        this._snapIndicator.set_position(x, y);
-        this._snapIndicator.set_size(w, h);
-        this._snapIndicator.show();
-      }
-    }
-
-    _updateSizeFromIndicator() {
-      if (this._tilingDisabled) {
-        return;
-      }
-      let updateView = false;
-      if (this._snapIndicator.visible) {
-        this._startX = this._snapIndicator.x;
-        this._lastX = this._snapIndicator.x + this._snapIndicator.width - 1;
-        this._startY = this._snapIndicator.y;
-        this._lastY = this._snapIndicator.y + this._snapIndicator.height - 1;
-        this._viewMode = ViewMode.TILE;
-        updateView = true;
-      } else if (
-        this._adaptiveGeometry &&
-        this._viewMode === ViewMode.TILE &&
-        this._startX > EDGE_THRESHOLD &&
-        this._startY > EDGE_THRESHOLD &&
-        this._activeMonitor.width - this._lastX > EDGE_THRESHOLD
-      ) {
-        [this._startX, this._startY, this._lastX, this._lastY] =
-          this._adaptiveGeometry;
-        this._viewMode = ViewMode.ADAPTIVE;
-        this._adaptiveGeometry = null;
-        updateView = true;
-      }
-
-      if (updateView) {
-        this._updateSize();
-        this._imageViewer._redraw(0, 0);
-      }
-      this._snapIndicator.hide();
     }
 
     get border_width() {
@@ -704,25 +621,12 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _toggleSwap(widget) {
-      const correction = this._heightDiff ? this._heightDiff : 0;
-      const extent = this._swapViewContainer.height - correction;
-      lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
       this._animateSwap();
       // folder hidden
       if (widget.checked) {
-        this._crossSlideAnimate(
-          this._folderView,
-          this._thumbnailView,
-          extent,
-          correction
-        );
+        this._crossSlideAnimate(this._folderView, this._thumbnailView);
       } else {
-        this._crossSlideAnimate(
-          this._thumbnailView,
-          this._folderView,
-          extent,
-          correction
-        );
+        this._crossSlideAnimate(this._thumbnailView, this._folderView);
       }
 
       if (!this._meltButton.visible) {
@@ -744,7 +648,7 @@ var UIMainViewer = GObject.registerClass(
       }
     }
 
-    _crossSlideAnimate(one, other, extent, correction) {
+    _crossSlideAnimate(one, other) {
       /*
        * Changing the height of an actor also
        * changes its minimum height. If we intend
@@ -760,22 +664,15 @@ var UIMainViewer = GObject.registerClass(
       one.visible = true;
       one.height = 0;
       one.ease({
-        height: extent,
+        height: other.height,
         duration: 300,
-        mode: Clutter.AnimationMode.EASE_IN_OUT,
-        onComplete: () => {
-          one.min_height = 0;
-        }
+        mode: Clutter.AnimationMode.EASE_IN_OUT
       });
-      other.height -= correction;
       other.ease({
         height: 0,
         duration: 300,
         mode: Clutter.AnimationMode.EASE_IN_OUT,
-        onComplete: () => {
-          other.visible = false;
-          other.min_height = 0;
-        }
+        onComplete: () => (other.visible = false)
       });
     }
 
@@ -876,12 +773,6 @@ var UIMainViewer = GObject.registerClass(
 
       this._moveFloatingButton(viewIndex);
 
-      this._tilingDisabled = this._settings.get_boolean(
-        Prefs.Fields.DISABLE_TILE_MODE
-      );
-
-      this._bindSettings();
-
       function getColorSetting(id, settings) {
         let colors = settings.get_strv(id);
         const color = colors
@@ -922,12 +813,6 @@ var UIMainViewer = GObject.registerClass(
 
         return unique;
       }
-    }
-
-    _bindSettings() {
-      SETTING_DISABLE_TILE_MODE = this._settings.get_boolean(
-        Prefs.Fields.DISABLE_TILE_MODE
-      );
     }
 
     _bindShortcuts() {
@@ -995,10 +880,11 @@ var UIMainViewer = GObject.registerClass(
           onComplete: this.hide.bind(this)
         });
       }
-      this._snapIndicator.hide();
     }
 
     _onDestroy() {
+      this._watcher?.destroy();
+      this._watcher = null;
       if (this._shutter) {
         this._shutter.disconnect(this._shutterClosingHandler);
         this._shutter.disconnect(this._shutterNewShotHandler);
@@ -1006,14 +892,12 @@ var UIMainViewer = GObject.registerClass(
         this._shutter = null;
       }
 
-      if (this._dock) {
-        this._dock.destroy();
-        this._dock = null;
-      }
-
-      //this._modal = null;
-      Main.layoutManager.removeChrome(this._snapIndicator);
+      this._dock = null;
+      Main.uiGroup.remove_actor(this._settingsButtonTooltip);
+      Main.uiGroup.remove_actor(this._swapButtonTooltip);
       Main.layoutManager.removeChrome(this);
+      this._settingsButtonTooltip.destroy();
+      this._swapButtonTooltip.destroy();
       this._unbindShortcuts();
     }
 
@@ -1119,13 +1003,28 @@ var UIMainViewer = GObject.registerClass(
       return [leftX, topY, rightX - leftX + 1, bottomY - topY + 1];
     }
 
+    _updatePosition() {
+      const [x, y, ,] = this._getGeometry();
+      this.set_position(x, y);
+    }
+
     _updateSize() {
-      this._heightDiff = this.height;
-
+      lg('[UIMainViewer::_updateSize]');
       const [x, y, w, h] = this._getGeometry();
-      this._setRect(x, y, w, h);
 
-      this._heightDiff -= this.height;
+      const diff = Math.abs(this.height - h);
+      this._updateSideBarHeight(diff);
+      this._setRect(x, y, w, h);
+    }
+
+    _updateSideBarHeight(diff) {
+      if (this._viewInitialized && diff > 0) {
+        if (this._folderView.visible) {
+          this._folderView.height = diff;
+        } else if (this._thumbnailView.visible) {
+          this._thumbnailView.height = diff;
+        }
+      }
     }
 
     _setRect(x, y, w, h) {
@@ -1235,7 +1134,6 @@ var UIMainViewer = GObject.registerClass(
 
       const [x, y] = [event.x, event.y];
       this._updateCursor(x, y);
-      this._updateSizeFromIndicator();
 
       return Clutter.EVENT_STOP;
     }
@@ -1358,13 +1256,12 @@ var UIMainViewer = GObject.registerClass(
       }
 
       if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
-        const isTileMode = this._viewMode === ViewMode.TILE;
         const [x, y, w, h] = this._getGeometry();
         const [minWidth, minHeight, maxWidth, maxHeight] = [
           INITIAL_WIDTH,
           INITIAL_HEIGHT,
-          isTileMode ? monitorWidth : this._maxXSwing ?? this.width,
-          isTileMode ? monitorHeight : this._maxYSwing ?? this.height
+          this._maxXSwing ?? this.width,
+          this._maxYSwing ?? this.height
         ];
 
         if (w < minWidth) {
@@ -1405,51 +1302,14 @@ var UIMainViewer = GObject.registerClass(
             dy += overshootY;
           }
         }
-      } else if (
-        cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW &&
-        !this._emptyView &&
-        !this._tilingDisabled
-      ) {
-        const leftTorque = monitorWidth / 2 - x;
-        const rightTorque = x - monitorWidth / 2;
-        const isEquallyLikely =
-          this._lastX <= monitorWidth - Panel.Right.width &&
-          monitorWidth - this._lastX <= EDGE_THRESHOLD + Panel.Right.width;
-        if (
-          this._startX >= Panel.Left.width &&
-          this._startX <= EDGE_THRESHOLD + Panel.Left.width &&
-          ((isEquallyLikely && leftTorque > rightTorque) || !isEquallyLikely)
-        ) {
-          this._updateSnapIndicator(
-            0 + Panel.Left.width,
-            0 + Panel.Top.height,
-            monitorWidth / 2 - Panel.Left.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else if (isEquallyLikely) {
-          this._updateSnapIndicator(
-            monitorWidth / 2,
-            0 + Panel.Top.height,
-            monitorWidth / 2 - Panel.Right.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else if (
-          this._startY >= Panel.Top.height &&
-          this._startY <= EDGE_THRESHOLD + Panel.Top.height
-        ) {
-          this._updateSnapIndicator(
-            0 + Panel.Left.width,
-            0 + Panel.Top.height,
-            monitorWidth - Panel.Left.width - Panel.Right.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else {
-          this._updateSnapIndicator(0, 0, 0, 0);
-        }
       }
 
-      this._updateSize();
-      this._updateDockPosition();
+      if (isMove) {
+        this._updatePosition();
+      } else {
+        this._updateSize();
+        this._updateDockPosition();
+      }
       if (this._dragCursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
         this._imageViewer._redraw(dx, dy);
       }
@@ -1504,29 +1364,9 @@ var UIMainViewer = GObject.registerClass(
       return this._onMotion(event, null);
     }
 
-    /*vfunc_touch_event(event) {
-    const eventType = event.type;
-    if (eventType === Clutter.EventType.TOUCH_BEGIN)
-      return this._onPress(event, 'touch', event.get_event_sequence());
-    else if (eventType === Clutter.EventType.TOUCH_END)
-      return this._onRelease(event, 'touch', event.get_event_sequence());
-    else if (eventType === Clutter.EventType.TOUCH_UPDATE)
-      return this._onMotion(event, event.get_event_sequence());
-
-    return Clutter.EVENT_PROPAGATE;
-   } */
-
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
-      global.stage.set_key_focus(null);
-      this._updateSizeFromIndicator();
-      if (this._dragButton) {
-        return this._onMotion(event, null);
-      } else {
-        this._dragButton = 0;
-        global.display.set_cursor(Meta.Cursor.DEFAULT);
-      }
-
+      global.display.set_cursor(Meta.Cursor.DEFAULT);
       return super.vfunc_leave_event(event);
     }
 
@@ -1687,6 +1527,7 @@ const UIFolderViewer = GObject.registerClass(
     }
 
     async latestShot() {
+      lg('[UIFolderViewer::latestShot]');
       if (!this._shotGroups) {
         await this._loadShots();
       }
@@ -1696,6 +1537,8 @@ const UIFolderViewer = GObject.registerClass(
         return { shots: this._shotGroups[today], date: today };
       }
 
+      lg('[UIFolderViewer::latestShot] shot dates:', this._shotsDate);
+      this._clearEmptyGroups();
       const date = this._shotsDate[0];
       if (this._shotGroups[date]) {
         return { shots: this._shotGroups[date], date };
@@ -1731,6 +1574,18 @@ const UIFolderViewer = GObject.registerClass(
         this._shotGroups[today].unshift(newShot.name);
         const folder = this._viewBox.get_child_at_index(0);
         folder.emit('activate', { nid: newShot });
+      }
+    }
+
+    _clearEmptyGroups() {
+      for (let i = 0; i < this._shotsDate.length; ) {
+        const date = this._shotsDate[i];
+        if (!this._shotGroups[date]) {
+          delete this._shotGroups[date];
+          this._shotsDate.splice(i, 1);
+        } else {
+          ++i;
+        }
       }
     }
 
@@ -1965,19 +1820,16 @@ const UIThumbnailViewer = GObject.registerClass(
   class UIThumbnailViewer extends UISideViewBase {
     _init(params) {
       super._init(params);
-
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _initialize(payload, onComplete) {
       if (!this._initialized) {
         this._loadShots(payload)
-          .then(([shots, batch]) => {
+          .then((shots) => {
             this.emit('replace', shots[0] ?? {});
             onComplete?.();
             this._initialized = true;
             this.notify('loaded');
-            this._streamBatch(batch);
           })
           .catch((err) => logError(err, 'Unable to load previous state'));
       }
@@ -1986,88 +1838,6 @@ const UIThumbnailViewer = GObject.registerClass(
     reload(shots, cb) {
       this._initialized = false;
       this._initialize(shots, cb);
-    }
-
-    _streamBatch(batch) {
-      this.cancelSubscriptions();
-      if (batch.length === 0) {
-        return;
-      }
-
-      const CHUNK = 4;
-      let index = 0;
-      this._batchId = GLib.timeout_add(
-        GLib.PRIORITY_DEFAULT,
-        300,
-        function () {
-          const next = batch.slice(index, index + CHUNK);
-          for (const shot of next) {
-            this._addShot(shot);
-          }
-          lg(
-            '[UIThumbnailViewer::_streamBatch::timeout_add]',
-            'index:',
-            index,
-            'current:',
-            next.length
-          );
-          index += next.length;
-          this._nextBatch = batch.slice(index);
-          if (next.length === 0) {
-            this.cancelSubscriptions();
-            return GLib.SOURCE_REMOVE;
-          }
-
-          return GLib.SOURCE_CONTINUE;
-        }.bind(this)
-      );
-      GLib.Source.set_name_by_id(
-        this._batchId,
-        '[pixzzle] UIThumbnailViewer._streamBatch'
-      );
-    }
-
-    cancelSubscriptions() {
-      if (this._batchId) {
-        GLib.source_remove(this._batchId);
-        this._batchId = null;
-      }
-    }
-
-    /**
-     * If there's a paused batching operation,
-     * resume it. A batch is a collection
-     * of shots that are yet to be added
-     * to the stage (ThumbnailViewer).
-     * When main window is hidden, we don't
-     * want any background actions running.
-     * Hiding the main window before some
-     * actions complete causes the view
-     * to have incomplete data. We continue
-     * with such operations.
-     */
-    activateSubscriptions() {
-      if (!this._nextBatch?.length) {
-        return;
-      }
-
-      this._streamBatch(this._nextBatch);
-    }
-
-    _maxVisibleShots() {
-      const sibling_extent = this.sibling.get_transformed_extents();
-      const this_extent = this.get_transformed_extents();
-      const isSiblingNaN = Number.isNaN(sibling_extent.get_height());
-      const isThisNaN = Number.isNaN(this_extent.get_height());
-      const sibling_height = isSiblingNaN
-        ? INITIAL_HEIGHT * 0.8
-        : sibling_extent.get_height();
-      const this_height = isThisNaN
-        ? INITIAL_HEIGHT * 0.8
-        : this_extent.get_height();
-
-      const effective_height = Math.max(this_height, sibling_height);
-      return Math.floor((effective_height * 2) / this.width);
     }
 
     _addShot(newShot, prepend) {
@@ -2095,6 +1865,10 @@ const UIThumbnailViewer = GObject.registerClass(
       function removeShot(permanently) {
         this._removeShot(shot).then((filename) => {
           const nextShot = this._viewBox.get_child_at_index(0);
+          lg(
+            '[UIThumbnailViewer::_addShot::removeShot] nextShot:',
+            nextShot?._filename
+          );
           this.emit('replace', {
             name: nextShot?._filename ?? null,
             widget: nextShot
@@ -2200,15 +1974,7 @@ const UIThumbnailViewer = GObject.registerClass(
       this._is_flat = bundle.is_flat;
       this._date = bundle.date;
       const shots = [];
-      const section = bundle.shots.slice(0, this._maxVisibleShots());
-      lg(
-        '[UIThumbnailViewer::_loadShots]',
-        'number of initial thumbs:',
-        section.length,
-        'total number of shots:',
-        bundle.shots.length
-      );
-      for (const shot of section) {
+      for (const shot of bundle.shots) {
         shots.push(this._addShot(shot));
       }
       const newShotProps = bundle.nid;
@@ -2216,17 +1982,11 @@ const UIThumbnailViewer = GObject.registerClass(
         this.emit('replace', { ...newShotProps, ...shots[0] });
       }
 
-      const unloaded = bundle.shots.slice(section.length);
-
-      return [shots, unloaded];
+      return shots;
     }
 
     get loading() {
       return !this._initialized;
-    }
-
-    _onDestroy() {
-      this.cancelSubscriptions();
     }
   }
 );

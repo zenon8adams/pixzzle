@@ -239,7 +239,6 @@ var DockedDash = GObject.registerClass(
     }
 
     _onDestroy() {
-      this.dash.destroy();
       this._themeManager.destroy();
     }
 

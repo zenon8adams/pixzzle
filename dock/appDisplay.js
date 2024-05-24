@@ -54,7 +54,6 @@ var AppViewItem = GObject.registerClass(
 
       if (expandTitleOnHover)
         this.connect('notify::hover', this._onHover.bind(this));
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _updateMultiline() {

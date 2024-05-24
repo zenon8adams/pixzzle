@@ -202,7 +202,7 @@ var DockDash = GObject.registerClass(
     }
 
     _hide() {
-        this._controller._hide();
+      this._controller._hide();
     }
 
     vfunc_get_preferred_height(forWidth) {
@@ -240,6 +240,7 @@ var DockDash = GObject.registerClass(
     _onDestroy() {
       if (this._requiresVisibilityTimeout)
         GLib.source_remove(this._requiresVisibilityTimeout);
+      this.pauseAnimation();
     }
 
     _hookUpLabel() {
@@ -258,36 +259,17 @@ var DockDash = GObject.registerClass(
         delta = 0;
       let increment = adjustment.step_increment;
 
-      if (this._isHorizontal) {
-        switch (event.get_scroll_direction()) {
-          case Clutter.ScrollDirection.LEFT:
-            delta = -increment;
-            break;
-          case Clutter.ScrollDirection.RIGHT:
-            delta = +increment;
-            break;
-          case Clutter.ScrollDirection.SMOOTH: {
-            let [dx, dy] = event.get_scroll_delta();
-            // TODO: Handle y
-            //delta = dy * increment;
-            // Also consider horizontal component, for instance touchpad
-            delta = dx * increment;
-            break;
-          }
-        }
-      } else {
-        switch (event.get_scroll_direction()) {
-          case Clutter.ScrollDirection.UP:
-            delta = -increment;
-            break;
-          case Clutter.ScrollDirection.DOWN:
-            delta = +increment;
-            break;
-          case Clutter.ScrollDirection.SMOOTH: {
-            let [, dy] = event.get_scroll_delta();
-            delta = dy * increment;
-            break;
-          }
+      switch (event.get_scroll_direction()) {
+        case Clutter.ScrollDirection.UP:
+          delta = -increment;
+          break;
+        case Clutter.ScrollDirection.DOWN:
+          delta = +increment;
+          break;
+        case Clutter.ScrollDirection.SMOOTH: {
+          let [, dy] = event.get_scroll_delta();
+          delta = dy * increment;
+          break;
         }
       }
 

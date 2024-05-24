@@ -38,7 +38,6 @@ var Fields = {
   SHOTBUTTON_BG_COLOR: 'shotbutton-bg-color',
   SHOTBUTTON_FG_COLOR: 'shotbutton-fg-color',
   SWAP_VIEWS: 'swap-views',
-  DISABLE_TILE_MODE: 'disable-tile-mode',
   NATURAL_PANNING: 'natural-panning',
   OCR_API: 'ocr-api'
 };
@@ -125,14 +124,6 @@ const SettingsApp = GObject.registerClass(
         SettingsSchema.set_int(Fields.SWAP_VIEWS, box.active)
       );
 
-      this.field_tile_mode = new Gtk.Switch({
-        active: SettingsSchema.get_boolean(Fields.DISABLE_TILE_MODE)
-      });
-      this.field_tile_mode.connect('state-set', (toggler, state) => {
-        SettingsSchema.set_boolean(Fields.DISABLE_TILE_MODE, state);
-        toggler.active = state;
-      });
-
       this.field_natural_panning = new Gtk.Switch({
         active: SettingsSchema.get_boolean(Fields.NATURAL_PANNING)
       });
@@ -174,17 +165,11 @@ const SettingsApp = GObject.registerClass(
       this.reset_button.get_style_context().add_class('circular');
       this.reset_button.connect('clicked', () => {
         Object.values(Fields).forEach((id) => SettingsSchema.reset(id));
-        this.field_tile_mode.active = SettingsSchema.get_boolean(
-          Fields.DISABLE_TILE_MODE
-        );
         this.field_swap_views.active = SettingsSchema.get_int(
           Fields.SWAP_VIEWS
         );
         this.field_natural_panning.active = SettingsSchema.get_boolean(
           Fields.NATURAL_PANNING
-        );
-        this.field_tile_mode.active = SettingsSchema.get_boolean(
-          Fields.DISABLE_TILE_MODE
         );
         this.field_main_bg_color.rgba = buildColor(
           SettingsSchema.get_strv(Fields.MAIN_BG_COLOR)
@@ -238,12 +223,6 @@ const SettingsApp = GObject.registerClass(
         halign: Gtk.Align.START
       });
 
-      const disableTileLabel = new Gtk.Label({
-        label: _('Prevent window from tiling'),
-        hexpand: true,
-        halign: Gtk.Align.START
-      });
-
       const naturalPanLabel = new Gtk.Label({
         label: _('Set drag direction of image viewer (natural panning)'),
         hexpand: true,
@@ -293,7 +272,6 @@ const SettingsApp = GObject.registerClass(
       addRow(shotButtonBGColor, this.field_shot_button_bg_color);
       addRow(shotButtonFGColor, this.field_shot_button_fg_color);
       addRow(swapViewsLabel, this.field_swap_views);
-      //   addRow(disableTileLabel, this.field_tile_mode);
       addRow(naturalPanLabel, this.field_natural_panning);
       addRow(ocrKeyLabel, this.field_ocr_api_key);
       addRow(null, this.field_keybinding);
