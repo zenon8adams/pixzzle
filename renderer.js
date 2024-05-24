@@ -48,6 +48,15 @@ const N_AXIS = 4;
 
 var UIImageRenderer = GObject.registerClass(
   {
+    Properties: {
+      anchor: GObject.ParamSpec.object(
+        'anchor',
+        'anchor',
+        'anchor',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+        St.Widget.$gtype
+      )
+    },
     Signals: {
       'lock-axis': { param_types: [Object.prototype] },
       'clean-slate': {},
@@ -58,7 +67,7 @@ var UIImageRenderer = GObject.registerClass(
     }
   },
   class UIImageRenderer extends St.Widget {
-    _init(topParent, params) {
+    _init(params) {
       super._init({
         ...params,
         reactive: true,
@@ -66,7 +75,6 @@ var UIImageRenderer = GObject.registerClass(
         layout_manager: new Clutter.BinLayout()
       });
 
-      this._topParent = topParent;
       this._canvas = new Clutter.Canvas();
       this.set_content(this._canvas);
       this._xpos = 0;
@@ -86,7 +94,7 @@ var UIImageRenderer = GObject.registerClass(
       });
       this._ocrText.clutter_text.set_editable(false);
       this._ocrText.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
-      this._topParent.add_child(this._ocrText);
+      this.anchor.add_child(this._ocrText);
 
       this._loadSettings();
 
@@ -107,7 +115,7 @@ var UIImageRenderer = GObject.registerClass(
             this._pixbuf.get_height()
           ];
 
-          const [maxWidth, maxHeight] = this._topParent._computeBigViewSize();
+          const [maxWidth, maxHeight] = this._getMaxSize();
           const [effectiveWidth, effectiveHeight] = [
             Math.min(pixWidth - this._xpos, maxWidth),
             Math.min(pixHeight - this._ypos, maxHeight)
@@ -168,7 +176,7 @@ var UIImageRenderer = GObject.registerClass(
 
     _redraw(deltaX, deltaY) {
       if (this._filename) {
-        const [width, height] = this._topParent._computeBigViewSize();
+        const [width, height] = this._getMaxSize();
         this._render(deltaX, deltaY, width, height);
       } else {
         this._isPanningEnabled = false;
@@ -219,7 +227,7 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _reload() {
-      const [width, height] = this._topParent._computeBigViewSize();
+      const [width, height] = this.anchor._computeBigViewSize();
       const [pixWidth, pixHeight] = [
         this._pixbuf.get_width(),
         this._pixbuf.get_height()
@@ -230,6 +238,11 @@ var UIImageRenderer = GObject.registerClass(
         Y_AXIS: pixHeight - height
       });
       this._redraw(0, 0);
+    }
+
+    _getMaxSize() {
+      const [width, height] = this.anchor._computeBigViewSize();
+      return [width, height];
     }
 
     _render(deltaX, deltaY, maxWidth, maxHeight) {
@@ -641,8 +654,8 @@ var UIImageRenderer = GObject.registerClass(
       let overshootX = 0,
         overshootY = 0;
 
-      leftX = leftX - this._topParent.x - this._topParent.border_width;
-      topY = topY - this._topParent.y - this._topParent.border_width;
+      leftX = leftX - this.anchor.x - this.anchor.border_width;
+      topY = topY - this.anchor.y - this.anchor.border_width;
       if (leftX < 0) {
         overshootX = leftX;
         leftX = 0;

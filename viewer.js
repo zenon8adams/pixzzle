@@ -76,12 +76,6 @@ const MODAL_CHECK_INTERVAL = 300;
  */
 const TINY_IMAGE = 'tINy';
 
-let SETTING_DISABLE_TILE_MODE;
-
-const ViewMode = Object.freeze({
-  ADAPTIVE: Symbol('adaptive'),
-  TILE: Symbol('tile')
-});
 var UIMainViewer = GObject.registerClass(
   {
     Signals: { 'drag-started': {}, 'drag-ended': {} }
@@ -108,8 +102,6 @@ var UIMainViewer = GObject.registerClass(
       this._lastY = 0;
 
       this._isActive = false;
-      this._viewMode = ViewMode.ADAPTIVE;
-      this._tilingDisabled = false;
       this._emptyView = true;
       this._isFlattened = new GBoolean(true);
 
@@ -206,7 +198,7 @@ var UIMainViewer = GObject.registerClass(
       this._bigViewContainer = new UILayout({
         name: 'UIBigViewLayout',
         x_expand: true,
-        y_expand: false,
+        y_expand: true,
         x_align: Clutter.ActorAlign.CENTER,
         y_align: Clutter.ActorAlign.CENTER
       });
@@ -221,7 +213,9 @@ var UIMainViewer = GObject.registerClass(
 
       this._settingsButton = new UIButton({
         style_class: 'pixzzle-ui-settings-button',
-        child: new St.Icon({ icon_name: 'org.gnome.Settings-symbolic' }),
+        child: new St.Icon({
+          icon_name: 'org.gnome.Settings-symbolic'
+        }),
         x_expand: false,
         reactive: true,
         x_align: Clutter.ActorAlign.CENTER,
@@ -313,7 +307,9 @@ var UIMainViewer = GObject.registerClass(
         visible: true
       });
 
-      this._imageViewer = new UIImageRenderer(this);
+      this._imageViewer = new UIImageRenderer({
+        anchor: this
+      });
       this._dock = new Docking.DockedDash({ docker: this._imageViewer });
       this._thumbnailView.connect('replace', (_, shot) => {
         this._imageViewer._replace(shot);
@@ -370,10 +366,6 @@ var UIMainViewer = GObject.registerClass(
       });
 
       this._imageViewer.connect('lock-axis', (_, axis) => {
-        if (this._viewMode !== ViewMode.ADAPTIVE) {
-          return;
-        }
-
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
         /*
@@ -423,7 +415,6 @@ var UIMainViewer = GObject.registerClass(
         if (xOffset > 0) this._startX += xOffset;
         if (yOffset > 0) this._startY += yOffset;
 
-        this._viewMode = ViewMode.ADAPTIVE;
         this._updateSize();
         this._emptyView = true;
       });
@@ -439,14 +430,6 @@ var UIMainViewer = GObject.registerClass(
         this._dock._hide();
       });
       this._bigViewContainer.add_child(this._imageViewer);
-
-      this._snapIndicator = new St.Widget({
-        style_class: 'pixzzle-ui-snap-indicator',
-        visible: true,
-        y_expand: true,
-        x_expand: true
-      });
-      Main.layoutManager.addChrome(this._snapIndicator);
 
       this._loadSettings();
       this.add_child(this._dock);
@@ -479,58 +462,6 @@ var UIMainViewer = GObject.registerClass(
         width: w,
         height: h
       });
-    }
-
-    _updateSnapIndicator(x, y, w, h) {
-      if (!this._adaptiveGeometry || this._viewMode === ViewMode.ADAPTIVE) {
-        this._adaptiveGeometry = [
-          this._startX,
-          this._startY,
-          this._lastX,
-          this._lastY
-        ];
-      }
-
-      if (x === 0 && y === 0 && w === 0 && h === 0) {
-        this._snapIndicator.hide();
-      } else {
-        this._snapIndicator.set_position(x, y);
-        this._snapIndicator.set_size(w, h);
-        this._snapIndicator.show();
-      }
-    }
-
-    _updateSizeFromIndicator() {
-      if (this._tilingDisabled) {
-        return;
-      }
-      let updateView = false;
-      if (this._snapIndicator.visible) {
-        this._startX = this._snapIndicator.x;
-        this._lastX = this._snapIndicator.x + this._snapIndicator.width - 1;
-        this._startY = this._snapIndicator.y;
-        this._lastY = this._snapIndicator.y + this._snapIndicator.height - 1;
-        this._viewMode = ViewMode.TILE;
-        updateView = true;
-      } else if (
-        this._adaptiveGeometry &&
-        this._viewMode === ViewMode.TILE &&
-        this._startX > EDGE_THRESHOLD &&
-        this._startY > EDGE_THRESHOLD &&
-        this._activeMonitor.width - this._lastX > EDGE_THRESHOLD
-      ) {
-        [this._startX, this._startY, this._lastX, this._lastY] =
-          this._adaptiveGeometry;
-        this._viewMode = ViewMode.ADAPTIVE;
-        this._adaptiveGeometry = null;
-        updateView = true;
-      }
-
-      if (updateView) {
-        this._updateSize();
-        this._imageViewer._redraw(0, 0);
-      }
-      this._snapIndicator.hide();
     }
 
     get border_width() {
@@ -841,12 +772,6 @@ var UIMainViewer = GObject.registerClass(
 
       this._moveFloatingButton(viewIndex);
 
-      this._tilingDisabled = this._settings.get_boolean(
-        Prefs.Fields.DISABLE_TILE_MODE
-      );
-
-      this._bindSettings();
-
       function getColorSetting(id, settings) {
         let colors = settings.get_strv(id);
         const color = colors
@@ -887,12 +812,6 @@ var UIMainViewer = GObject.registerClass(
 
         return unique;
       }
-    }
-
-    _bindSettings() {
-      SETTING_DISABLE_TILE_MODE = this._settings.get_boolean(
-        Prefs.Fields.DISABLE_TILE_MODE
-      );
     }
 
     _bindShortcuts() {
@@ -960,11 +879,10 @@ var UIMainViewer = GObject.registerClass(
           onComplete: this.hide.bind(this)
         });
       }
-      this._snapIndicator.hide();
     }
 
     _onDestroy() {
-      this._watcher.destroy();
+      this._watcher?.destroy();
       this._watcher = null;
       if (this._shutter) {
         this._shutter.disconnect(this._shutterClosingHandler);
@@ -976,7 +894,6 @@ var UIMainViewer = GObject.registerClass(
       this._dock = null;
       Main.uiGroup.remove_actor(this._settingsButtonTooltip);
       Main.uiGroup.remove_actor(this._swapButtonTooltip);
-      Main.layoutManager.removeChrome(this._snapIndicator);
       Main.layoutManager.removeChrome(this);
       this._settingsButtonTooltip.destroy();
       this._swapButtonTooltip.destroy();
@@ -1083,6 +1000,11 @@ var UIMainViewer = GObject.registerClass(
       const bottomY = Math.max(this._startY, this._lastY);
 
       return [leftX, topY, rightX - leftX + 1, bottomY - topY + 1];
+    }
+
+    _updatePosition() {
+      const [x, y, ,] = this._getGeometry();
+      this.set_position(x, y);
     }
 
     _updateSize() {
@@ -1211,7 +1133,6 @@ var UIMainViewer = GObject.registerClass(
 
       const [x, y] = [event.x, event.y];
       this._updateCursor(x, y);
-      this._updateSizeFromIndicator();
 
       return Clutter.EVENT_STOP;
     }
@@ -1334,13 +1255,12 @@ var UIMainViewer = GObject.registerClass(
       }
 
       if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
-        const isTileMode = this._viewMode === ViewMode.TILE;
         const [x, y, w, h] = this._getGeometry();
         const [minWidth, minHeight, maxWidth, maxHeight] = [
           INITIAL_WIDTH,
           INITIAL_HEIGHT,
-          isTileMode ? monitorWidth : this._maxXSwing ?? this.width,
-          isTileMode ? monitorHeight : this._maxYSwing ?? this.height
+          this._maxXSwing ?? this.width,
+          this._maxYSwing ?? this.height
         ];
 
         if (w < minWidth) {
@@ -1381,51 +1301,14 @@ var UIMainViewer = GObject.registerClass(
             dy += overshootY;
           }
         }
-      } else if (
-        cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW &&
-        !this._emptyView &&
-        !this._tilingDisabled
-      ) {
-        const leftTorque = monitorWidth / 2 - x;
-        const rightTorque = x - monitorWidth / 2;
-        const isEquallyLikely =
-          this._lastX <= monitorWidth - Panel.Right.width &&
-          monitorWidth - this._lastX <= EDGE_THRESHOLD + Panel.Right.width;
-        if (
-          this._startX >= Panel.Left.width &&
-          this._startX <= EDGE_THRESHOLD + Panel.Left.width &&
-          ((isEquallyLikely && leftTorque > rightTorque) || !isEquallyLikely)
-        ) {
-          this._updateSnapIndicator(
-            0 + Panel.Left.width,
-            0 + Panel.Top.height,
-            monitorWidth / 2 - Panel.Left.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else if (isEquallyLikely) {
-          this._updateSnapIndicator(
-            monitorWidth / 2,
-            0 + Panel.Top.height,
-            monitorWidth / 2 - Panel.Right.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else if (
-          this._startY >= Panel.Top.height &&
-          this._startY <= EDGE_THRESHOLD + Panel.Top.height
-        ) {
-          this._updateSnapIndicator(
-            0 + Panel.Left.width,
-            0 + Panel.Top.height,
-            monitorWidth - Panel.Left.width - Panel.Right.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else {
-          this._updateSnapIndicator(0, 0, 0, 0);
-        }
       }
 
-      this._updateSize();
-      this._updateDockPosition();
+      if (isMove) {
+        this._updatePosition();
+      } else {
+        this._updateSize();
+        this._updateDockPosition();
+      }
       if (this._dragCursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
         this._imageViewer._redraw(dx, dy);
       }
@@ -1480,29 +1363,9 @@ var UIMainViewer = GObject.registerClass(
       return this._onMotion(event, null);
     }
 
-    /*vfunc_touch_event(event) {
-    const eventType = event.type;
-    if (eventType === Clutter.EventType.TOUCH_BEGIN)
-      return this._onPress(event, 'touch', event.get_event_sequence());
-    else if (eventType === Clutter.EventType.TOUCH_END)
-      return this._onRelease(event, 'touch', event.get_event_sequence());
-    else if (eventType === Clutter.EventType.TOUCH_UPDATE)
-      return this._onMotion(event, event.get_event_sequence());
-
-    return Clutter.EVENT_PROPAGATE;
-   } */
-
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
-      global.stage.set_key_focus(null);
-      this._updateSizeFromIndicator();
-      if (this._dragButton) {
-        return this._onMotion(event, null);
-      } else {
-        this._dragButton = 0;
-        global.display.set_cursor(Meta.Cursor.DEFAULT);
-      }
-
+      global.display.set_cursor(Meta.Cursor.DEFAULT);
       return super.vfunc_leave_event(event);
     }
 
