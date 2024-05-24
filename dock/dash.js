@@ -254,20 +254,8 @@ var DockDash = GObject.registerClass(
       // reset timeout to avid conflicts with the mousehover event
       this._ensureItemVisibility(null);
 
-      // Skip to avoid double events mouse
-      // TODO: Horizontal events are emulated, potentially due to a conflict
-      // with the workspace switching gesture.
-      if (!this._isHorizontal && event.is_pointer_emulated()) {
-        return Clutter.EVENT_STOP;
-      }
-
-      let adjustment,
+      let adjustment = this._scrollView.get_vscroll_bar().get_adjustment(),
         delta = 0;
-
-      if (this._isHorizontal)
-        adjustment = this._scrollView.get_hscroll_bar().get_adjustment();
-      else adjustment = this._scrollView.get_vscroll_bar().get_adjustment();
-
       let increment = adjustment.step_increment;
 
       if (this._isHorizontal) {
@@ -325,7 +313,7 @@ var DockDash = GObject.registerClass(
           100,
           () => {
             actor.disconnect(destroyId);
-            ensureActorVisibleInScrollView(this._scrollView, actor);
+            Util.ensureActorVisibleInScrollView(this._scrollView, actor);
             this._ensureActorVisibilityTimeoutId = 0;
             return GLib.SOURCE_REMOVE;
           }
@@ -519,60 +507,3 @@ var DockDash = GObject.registerClass(
     }
   }
 );
-
-function ensureActorVisibleInScrollView(scrollView, actor) {
-  const { adjustment: vAdjustment } = scrollView.vscroll;
-  const { adjustment: hAdjustment } = scrollView.hscroll;
-  const { value: vValue0, pageSize: vPageSize, upper: vUpper } = vAdjustment;
-  const { value: hValue0, pageSize: hPageSize, upper: hUpper } = hAdjustment;
-  let [hValue, vValue] = [hValue0, vValue0];
-  let vOffset = 0;
-  let hOffset = 0;
-  let fade = scrollView.get_effect('fade');
-  if (fade) {
-    vOffset = fade.fade_margins.top;
-    hOffset = fade.fade_margins.left;
-  }
-
-  let box = actor.get_allocation_box();
-  let y1 = box.y1,
-    y2 = box.y2,
-    x1 = box.x1,
-    x2 = box.x2;
-
-  let parent = actor.get_parent();
-  while (parent != scrollView) {
-    if (!parent) throw new Error('Actor not in scroll view');
-
-    let box = parent.get_allocation_box();
-    y1 += box.y1;
-    y2 += box.y1;
-    x1 += box.x1;
-    x2 += box.x1;
-    parent = parent.get_parent();
-  }
-
-  if (y1 < vValue + vOffset) vValue = Math.max(0, y1 - vOffset);
-  else if (vValue < vUpper - vPageSize && y2 > vValue + vPageSize - vOffset)
-    vValue = Math.min(vUpper - vPageSize, y2 + vOffset - vPageSize);
-
-  if (x1 < hValue + hOffset) hValue = Math.max(0, x1 - hOffset);
-  else if (hValue < hUpper - hPageSize && x2 > hValue + hPageSize - hOffset)
-    hValue = Math.min(hUpper - hPageSize, x2 + hOffset - hPageSize);
-
-  if (vValue !== vValue0) {
-    vAdjustment.ease(vValue, {
-      mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-      duration: Util.SCROLL_TIME
-    });
-  }
-
-  if (hValue !== hValue0) {
-    hAdjustment.ease(hValue, {
-      mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-      duration: Util.SCROLL_TIME
-    });
-  }
-
-  return [hValue - hValue0, vValue - vValue0];
-}

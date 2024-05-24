@@ -48,7 +48,8 @@ const {
   getDate,
   filesDateSorter,
   fmt,
-  Constants
+  Constants,
+  ensureActorVisibleInScrollView
 } = Me.imports.utils;
 const { storeScreenshot } = Me.imports.common;
 const Shutter = Me.imports.screenshot;
@@ -1552,6 +1553,7 @@ const UISideViewBase = GObject.registerClass(
       });
       this.add_child(this._scrollView);
       this._scrollView.set_overlay_scrollbars(false);
+      this._scrollView.connect('scroll-event', this._onScrollEvent.bind(this));
 
       this._viewBox = new St.Viewport({
         layout_manager: new Clutter.BoxLayout({
@@ -1562,6 +1564,62 @@ const UISideViewBase = GObject.registerClass(
         y_expand: true
       });
       this._scrollView.add_actor(this._viewBox);
+    }
+
+    _onScrollEvent(actor, event) {
+      this._ensureItemVisibility(null);
+
+      let adjustment,
+        delta = 0;
+      adjustment = this._scrollView.get_vscroll_bar().get_adjustment();
+
+      let increment = adjustment.step_increment;
+
+      switch (event.get_scroll_direction()) {
+        case Clutter.ScrollDirection.UP:
+          delta = -increment;
+          break;
+        case Clutter.ScrollDirection.DOWN:
+          delta = +increment;
+          break;
+        case Clutter.ScrollDirection.SMOOTH: {
+          let [, dy] = event.get_scroll_delta();
+          delta = dy * increment;
+          break;
+        }
+      }
+
+      const value = adjustment.get_value();
+
+      // TODO: Remove this if possible.
+      if (Number.isNaN(value)) {
+        adjustment.set_value(delta);
+      } else {
+        adjustment.set_value(value + delta);
+      }
+
+      return Clutter.EVENT_STOP;
+    }
+
+    _ensureItemVisibility(actor) {
+      if (actor?.hover) {
+        const destroyId = actor.connect('destroy', () =>
+          this._ensureItemVisibility(null)
+        );
+        this._ensureActorVisibilityTimeoutId = GLib.timeout_add(
+          GLib.PRIORITY_DEFAULT,
+          100,
+          () => {
+            actor.disconnect(destroyId);
+            ensureActorVisibleInScrollView(this._scrollView, actor);
+            this._ensureActorVisibilityTimeoutId = 0;
+            return GLib.SOURCE_REMOVE;
+          }
+        );
+      } else if (this._ensureActorVisibilityTimeoutId) {
+        GLib.source_remove(this._ensureActorVisibilityTimeoutId);
+        this._ensureActorVisibilityTimeoutId = 0;
+      }
     }
   }
 );
@@ -1613,17 +1671,9 @@ const UIFolderViewer = GObject.registerClass(
           ...params
         });
       });
-      /*
-      shot.connect('delete', (widget) => {
-        this._removeShot(widget).then((filename) => {
-          const nextShot = this._viewBox.get_child_at_index(0);
-          this.emit('replace', {
-            name: nextShot?._filename ?? null,
-            widget: widget
-          });
-          GLib.unlink(filename);
-        });
-      }); */
+      folder._trigger.connect('notify::hover', (item) =>
+        this._ensureItemVisibility(item)
+      );
       if (prepend) {
         this._viewBox.insert_child_at_index(folder, 0);
       } else {
@@ -1847,7 +1897,11 @@ const UIFolder = GObject.registerClass(
   },
   class UIFolder extends St.Widget {
     _init(name, shots, gradient, params) {
-      super._init({ ...params, layout_manager: new Clutter.BinLayout() });
+      super._init({
+        ...params,
+        reactive: true,
+        layout_manager: new Clutter.BinLayout()
+      });
 
       this._shots = shots;
       this._label = new St.Label({
@@ -2029,7 +2083,9 @@ const UIThumbnailViewer = GObject.registerClass(
           removeShot.bind(this)(permanently);
         }
       });
-
+      shot._trigger.connect('notify::hover', (item) => {
+        this._ensureItemVisibility(item);
+      });
       if (prepend) {
         this._viewBox.insert_child_at_index(shot, 0);
       } else {
@@ -2182,7 +2238,7 @@ const UIPreview = GObject.registerClass(
   },
   class UIPreview extends St.Widget {
     _init(filename, span, params) {
-      super._init({ ...params, y_expand: false });
+      super._init({ ...params, y_expand: false, reactive: true });
 
       this._surface = new St.Widget({ x_expand: false, y_expand: false });
       this.add_child(this._surface);
