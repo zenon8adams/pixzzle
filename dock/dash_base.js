@@ -67,6 +67,7 @@ var DashItemContainer = GObject.registerClass(
       this._labelText = '';
       this.label = new St.Label({ style_class: 'dash-label' });
       this.label.hide();
+      Main.layoutManager.addChrome(this.label);
       this.label.connectObject('destroy', () => (this.label = null), this);
       this.label_actor = this.label;
 
@@ -78,6 +79,7 @@ var DashItemContainer = GObject.registerClass(
 
       this.connect('destroy', () => {
         this.child = null;
+        Main.layoutManager.removeChrome(this.label);
         this.label?.destroy();
       });
     }
