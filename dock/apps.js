@@ -54,8 +54,8 @@ const UIApp = GObject.registerClass(
       return this._animatable;
     }
 
-    get_sim_event() {
-      return this._simulation.event;
+    get_simulation() {
+      return this._simulation;
     }
 
     hide_on_trigger() {
@@ -85,7 +85,7 @@ const UIApp = GObject.registerClass(
     }
 
     click(button) {
-      this.emit('clicked', this.get_sim_event());
+      this.emit('clicked', this.get_simulation());
     }
   }
 );

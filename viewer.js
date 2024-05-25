@@ -63,6 +63,7 @@ const { UITooltip } = Me.imports.tooltip;
 const { UIImageRenderer } = Me.imports.renderer;
 const Dialog = Me.imports.dialog;
 const Docking = Me.imports.dock.docking;
+const DockUtil = Me.imports.dock.utils;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
@@ -107,6 +108,9 @@ var UIMainViewer = GObject.registerClass(
       this._isFlattened = new GBoolean(true);
 
       Main.layoutManager.addChrome(this);
+      DockUtil.registerAppOwner(DockUtil.AppsID.TAKE_SCREENSHOT, {
+        activate: this._showScreenshotView.bind(this)
+      });
 
       this._overlay = new Overlay.UIOverlay(this);
 

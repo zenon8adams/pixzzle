@@ -356,8 +356,12 @@ var DockDash = GObject.registerClass(
       );
       apps.forEach((app) => {
         lg('[DockDash::_redisplay] app:', app);
-        app.connect('clicked', (_, ev) => {
-          this._docker._onKeyPress(ev);
+        app.connect('clicked', (_, { event }) => {
+          if (event) {
+            this._docker._onKeyPress(event);
+          } else {
+            app.get_simulation().activate();
+          }
           app.hide_on_trigger() && this._hide();
         });
         const item = this._createAppItem(app);

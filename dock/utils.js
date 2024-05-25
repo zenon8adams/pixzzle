@@ -37,7 +37,8 @@ var AppsID = {
   OCR: 'ocr',
   SNIP: 'snip',
   ROTATE_CLOCKWISE: 'rotate-clockwise',
-  ROTATE_COUNTER_CLOCKWISE: 'rotate-counter-clockwise'
+  ROTATE_COUNTER_CLOCKWISE: 'rotate-counter-clockwise',
+  TAKE_SCREENSHOT: 'take-screenshot'
 };
 
 var { SCHEMA_NAME, lg } = Me.imports.utils;
@@ -237,6 +238,20 @@ var AppsScaffold = {
       hideOnTrigger: false
     }
   },
+  [AppsID.SNIP]: {
+    id: AppsID.SNIP,
+    name: 'Snip Tool (X)',
+    icon: `${Me.path}/assets/icons/pixzzle-ui-snip-symbolic.png`,
+    animatable: false,
+    simulation: {
+      event: {
+        keyval: Clutter.KEY_X,
+        modifier_state: 0,
+        is_simulation: true
+      },
+      hideOnTrigger: true
+    }
+  },
   [AppsID.OCR]: {
     id: AppsID.OCR,
     name: 'Ocr Tool (O)',
@@ -249,20 +264,6 @@ var AppsScaffold = {
     simulation: {
       event: {
         keyval: Clutter.KEY_O,
-        modifier_state: 0,
-        is_simulation: true
-      },
-      hideOnTrigger: true
-    }
-  },
-  [AppsID.SNIP]: {
-    id: AppsID.SNIP,
-    name: 'Snip Tool (X)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-snip-symbolic.png`,
-    animatable: false,
-    simulation: {
-      event: {
-        keyval: Clutter.KEY_X,
         modifier_state: 0,
         is_simulation: true
       },
@@ -296,5 +297,21 @@ var AppsScaffold = {
       },
       hideOnTrigger: false
     }
+  },
+  [AppsID.TAKE_SCREENSHOT]: {
+    id: AppsID.TAKE_SCREENSHOT,
+    name: 'Take Screenshot (Ctrl+F10)',
+    icon: `${Me.path}/assets/icons/pixzzle-ui-new-shot-symbolic.png`,
+    animatable: false,
+    simulation: {
+      hideOnTrigger: false,
+      activate: null
+    }
   }
 };
+
+function registerAppOwner(appID, simProps = {}) {
+  for (const prop in simProps) {
+    AppsScaffold[appID].simulation[prop] = simProps[prop];
+  }
+}
