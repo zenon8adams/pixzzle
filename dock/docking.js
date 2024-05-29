@@ -61,6 +61,14 @@ var DashSlideContainer = GObject.registerClass(
         0,
         1,
         1
+      ),
+      swipe: GObject.ParamSpec.enum(
+        'swipe',
+        'swipe',
+        'swipe',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        St.Side,
+        St.Side.RIGHT
       )
     }
   },
@@ -92,27 +100,43 @@ var DashSlideContainer = GObject.registerClass(
 
       let childBox = new Clutter.ActorBox();
 
-      childBox.x1 = 0;
-      childBox.x2 = childWidth;
+      if (this.swipe === St.Side.LEFT) {
+        childBox.x1 = childWidth * (this.slideX - 1);
+        childBox.x2 = childWidth * this.slideX;
+      } else {
+        childBox.x1 = 0;
+        childBox.x2 = childWidth;
+      }
       childBox.y1 = 0;
       childBox.y2 = childBox.y1 + childHeight;
 
       this.child.allocate(childBox);
 
-      this.child.set_clip(
-        -childBox.x1,
-        -childBox.y1,
-        -childBox.x1 + availWidth,
-        -childBox.y1 + availHeight
-      );
+      if (this.swipe === St.Side.LEFT) {
+        this.child.set_clip(
+          -childBox.x1,
+          -childBox.y1,
+          -childBox.x1 + availWidth,
+          -childBox.y1 + availHeight
+        );
+      } else {
+        this.child.set_clip(
+          -childBox.x1,
+          -childBox.y1,
+          -childBox.x1 + availWidth,
+          -childBox.y1 + availHeight
+        );
+      }
     }
 
     vfunc_get_preferred_width(forHeight) {
       let [minWidth, natWidth] = super.vfunc_get_preferred_width(
         forHeight || 0
       );
-      minWidth = minWidth * this.slideX;
-      natWidth = natWidth * this.slideX;
+      if (this.swipe === St.Side.RIGHT) {
+        minWidth = minWidth * this.slideX;
+        natWidth = natWidth * this.slideX;
+      }
       return [minWidth, natWidth];
     }
   }
@@ -165,7 +189,9 @@ var DockedDash = GObject.registerClass(
         name: 'DashSlideContainer',
         reactive: true,
         slide_x: 0,
-        y_align: Utils.getAlignment()
+        swipe: St.Side.LEFT,
+        y_align: Utils.getAlignment(),
+        x_expand: false
       });
 
       this._box = new St.BoxLayout({
@@ -200,16 +226,16 @@ var DockedDash = GObject.registerClass(
         () => this._initialize()
       );
 
-      // Add dash container actor and the container to the Chrome.
       this.set_child(this._slider);
       this._slider.set_child(this._box);
       this._box.add_actor(this.dash);
 
-      // Add aligning container without tracking it for input region
-      //Main.uiGroup.add_child(this);
-
       this._slider.connect('enter-event', () => {
-        lg('[DashToDock::mount::_slider::enter-event] isHidden:', this.visible);
+        lg(
+          '[DashToDock::mount::_slider::enter-event] isHidden:',
+          this.visible,
+          this._dockState
+        );
         if (this._dockState == State.HIDDEN) {
           this._show();
         }
@@ -219,10 +245,19 @@ var DockedDash = GObject.registerClass(
       this.connect('notify::height', () => {
         this.dash.setMaxSize(this.width, this.height);
       });
+      this._resetPosition();
 
       this.connect('notify::width', () => (this.translation_x = -this.width));
 
       this.connect('destroy', this._onDestroy.bind(this));
+    }
+
+    _disableApps() {
+      this.dash._disableApps();
+    }
+
+    _enableApps() {
+      this.dash._enableApps();
     }
 
     get position() {
@@ -236,6 +271,14 @@ var DockedDash = GObject.registerClass(
       this._themeManager.updateCustomTheme();
 
       this._updateVisibilityMode();
+    }
+
+    _enableApps() {
+      this.dash._enableApps();
+    }
+
+    _disableApps() {
+      this.dash._disableApps();
     }
 
     _onDestroy() {
@@ -332,22 +375,12 @@ var DockedDash = GObject.registerClass(
       });
     }
 
-    _resetPosition(at) {
+    _resetPosition() {
       if (!this._ready) {
         this._updateVisibilityMode();
       }
 
       this.remove_style_class_name('fixed');
-
-      let fraction = HEIGHT_FRACTION;
-
-      this.height = Math.round(fraction * at.height);
-      this.x = at.x + at.width;
-      this.y = at.y;
-
-      let offset = ((1 - fraction) / 2) * at.height;
-      this.y += Math.round(offset);
-
       this.dash._container.set_height(-1);
 
       this._ready = true;

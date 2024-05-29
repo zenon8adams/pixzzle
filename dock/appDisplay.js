@@ -179,27 +179,36 @@ var AppIcon = GObject.registerClass(
         expandTitleOnHover
       );
 
-      this.app = app;
-      this._name = app.get_name();
+      this._iconParams = iconParams;
 
       this._iconContainer = new St.Widget({
         layout_manager: new Clutter.BinLayout(),
         x_expand: true,
         y_expand: true
       });
-
       this.set_child(this._iconContainer);
 
-      iconParams['createIcon'] = this._createIcon.bind(this);
-      iconParams['setSizeManually'] = true;
-      this.icon = new IconGrid.BaseIcon(app.get_name(), iconParams);
-      this._iconContainer.add_child(this.icon);
-
-      this.label_actor = this.icon.label;
+      this._setUpApp(app, iconParams);
     }
 
     _createIcon(iconSize) {
       return this.app.get_icon(iconSize);
+    }
+
+    _replaceApp(app) {
+      const iconParams = {};
+      this._iconContainer.remove_child(this.icon);
+      this._setUpApp(app, this._iconParams);
+    }
+
+    _setUpApp(app, iconParams) {
+      this.app = app;
+      this._name = app.get_name();
+      iconParams['createIcon'] = this._createIcon.bind(this);
+      iconParams['setSizeManually'] = true;
+      this.icon = new IconGrid.BaseIcon(app.get_name(), iconParams);
+      this._iconContainer.add_child(this.icon);
+      this.label_actor = this.icon.label;
     }
 
     vfunc_leave_event(event) {
@@ -214,7 +223,7 @@ var AppIcon = GObject.registerClass(
     }
 
     activate(button) {
-        this.app.click(button);
+      this.app.click(button);
     }
 
     shouldShowTooltip() {

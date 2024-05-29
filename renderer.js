@@ -70,6 +70,7 @@ var UIImageRenderer = GObject.registerClass(
     _init(params) {
       super._init({
         ...params,
+        name: 'UIImageRenderer',
         reactive: true,
         can_focus: true,
         layout_manager: new Clutter.BinLayout()
@@ -122,6 +123,7 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _draw(canvas, context) {
+      lg('[UIImageRenderer::_draw] filename:', this._filename);
       if (this._pixbuf && this._filename) {
         const [pixWidth, pixHeight] = [
           this._pixbuf.get_width(),
@@ -178,7 +180,7 @@ var UIImageRenderer = GObject.registerClass(
           this._snipIndicator.height = this._pixbuf.height;
           this._doOCR(this._pixbuf);
         }
-      } else if (this._filename) {
+      } else {
         context.save();
         context.setOperator(Cairo.Operator.CLEAR);
         context.paint();
@@ -325,10 +327,7 @@ var UIImageRenderer = GObject.registerClass(
 
     _copyImageToClipboard(pixbuf, message, onComplete = null) {
       if (pixbuf == null) {
-        this._notifyUser(
-          'No image is available',
-          'Click the `Add New` button to add screenshot'
-        );
+        this._notifyOfEmptyView();
         return;
       }
       if (this._clipboardCopyCancellable) {
@@ -389,6 +388,13 @@ var UIImageRenderer = GObject.registerClass(
       notification.setTransient(true);
       Main.messageTray.add(source);
       source.showNotification(notification);
+    }
+
+    _notifyOfEmptyView() {
+      this._notifyUser(
+        'No image is available',
+        'Click the `Add New` button to add screenshot'
+      );
     }
 
     _updateToolkits() {
@@ -683,6 +689,9 @@ var UIImageRenderer = GObject.registerClass(
 
     _onKeyPress(event) {
       const symbol = event.keyval;
+      if (!this._canUseKey(symbol)) {
+        return;
+      }
       if (symbol === Clutter.KEY_Escape) {
         const before = this._snipIndicator.visible;
         this.abortSnipSession();
@@ -761,6 +770,16 @@ var UIImageRenderer = GObject.registerClass(
       return Clutter.EVENT_PROPAGATE;
     }
 
+    _canUseKey(symbol) {
+      const imageManipKeys = Object.keys(this._snipActions);
+      if (this._pixbuf == null && imageManipKeys.find(key => symbol == key)) {
+        this._notifyOfEmptyView();
+        return false;
+      }
+
+      return true;
+    }
+
     _onPress(event, button, sequence) {
       if (this._dragButton) {
         return Clutter.EVENT_PROPAGATE;
@@ -813,6 +832,10 @@ var UIImageRenderer = GObject.registerClass(
       const [x, y] = [event.x, event.y];
       if (!this._dragButton) {
         this._updateCursor();
+        return Clutter.EVENT_STOP;
+      }
+
+      if (!this._pixbuf) {
         return Clutter.EVENT_STOP;
       }
 
@@ -1099,7 +1122,7 @@ const UIOcrTip = GObject.registerClass(
       }
     }
 
-    _onMotion(event) {
+    _onMotion(event, sequence) {
       return Clutter.EVENT_STOP;
     }
 

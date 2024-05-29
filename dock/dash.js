@@ -27,17 +27,15 @@ const St = imports.gi.St;
 const Me = imports.misc.extensionUtils.getCurrentExtension();
 const AppDisplay = Me.imports.dock.appDisplay;
 const UIApp = Me.imports.dock.apps;
-//const Dash = imports.ui.dash;
-const DND = imports.ui.dnd;
 const IconGrid = imports.ui.iconGrid;
 const Main = imports.ui.main;
-const Util = imports.misc.util;
 const Workspace = imports.ui.workspace;
 
 const Docking = Me.imports.dock.docking;
 const Utils = Me.imports.dock.utils;
 const AppIcons = Me.imports.dock.appIcons;
 const Dash = Me.imports.dock.dash_base;
+const CommUi = Me.imports.common;
 const lg = Utils.lg;
 
 const DASH_ANIMATION_TIME = Dash.DASH_ANIMATION_TIME;
@@ -137,17 +135,13 @@ var DockDash = GObject.registerClass(
         Clutter.get_default_text_direction() == Clutter.TextDirection.RTL;
       this._box = new St.BoxLayout({
         name: 'dashtodockScrollBox',
-        vertical: !this._isHorizontal,
+        vertical: true,
         clip_to_allocation: false,
-        ...(!this._isHorizontal
-          ? { layout_manager: new DockDashIconsVerticalLayout() }
-          : {}),
+        layout_manager: new DockDashIconsVerticalLayout(),
         x_align: rtl ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
-        y_align: this._isHorizontal
-          ? this._alignment
-          : Clutter.ActorAlign.START,
-        y_expand: !this._isHorizontal,
-        x_expand: this._isHorizontal
+        y_align: Clutter.ActorAlign.START,
+        y_expand: true,
+        x_expand: false
       });
       this._box._delegate = this;
       this._dashContainer.add_actor(this._scrollView);
@@ -172,6 +166,7 @@ var DockDash = GObject.registerClass(
         })
       );
       this._background.add_child(sizerBox);
+      this._disableAppsOnLoad = false;
 
       this.add_child(this._background);
       this.add_child(this._dashContainer);
@@ -180,13 +175,20 @@ var DockDash = GObject.registerClass(
     }
 
     playAnimation() {
+      lg(
+        '[DockDash::playAnimation] matches:',
+        this._box
+          .get_children()
+          .filter((child) => child.app.get_id() && child.app.animatable())
+          .length
+      );
       this._box
         .get_children()
         .forEach(
           (child) =>
             child.app.get_id() &&
             child.app.animatable() &&
-            child.app.icon.play()
+            child.app.icon?.play()
         );
     }
 
@@ -197,7 +199,7 @@ var DockDash = GObject.registerClass(
           (child) =>
             child.app.get_id() &&
             child.app.animatable() &&
-            child.app.icon.stop()
+            child.app.icon?.stop()
         );
     }
 
@@ -241,6 +243,7 @@ var DockDash = GObject.registerClass(
       if (this._requiresVisibilityTimeout)
         GLib.source_remove(this._requiresVisibilityTimeout);
       this.pauseAnimation();
+      this._box.destroy_all_children();
     }
 
     _hookUpLabel() {
@@ -295,7 +298,7 @@ var DockDash = GObject.registerClass(
           100,
           () => {
             actor.disconnect(destroyId);
-            Util.ensureActorVisibleInScrollView(this._scrollView, actor);
+            CommUi.ensureActorVisibleInScrollView(this._scrollView, actor);
             this._ensureActorVisibilityTimeoutId = 0;
             return GLib.SOURCE_REMOVE;
           }
@@ -323,6 +326,20 @@ var DockDash = GObject.registerClass(
       return item;
     }
 
+    _rewireApp(app, props) {
+      lg('[DockDash::_rewireApp] props:', Object.entries(props));
+      const item = this._box
+        .get_children()
+        .find((child) => child.app.get_id() === app.get_id());
+      lg('[DockDash::_rewireApp] item:', item);
+      if (item == null) {
+        return;
+      }
+      item.child._replaceApp(this._linkAppToSignal(app.clone(props)));
+      item.child.icon.setIconSize(this.iconSize);
+      app.destroy();
+    }
+
     _requireVisibility() {
       this.requiresVisibility = true;
 
@@ -347,29 +364,59 @@ var DockDash = GObject.registerClass(
     }
 
     _redisplay() {
+      lg('[DockDash::_redisplay] disabled on load:', this._disableAppsOnLoad);
       const current = this._box
         .get_children()
-        .map((child) => child.app.get_id());
-      lg('[DockDash::_redisplay] current:', current);
-      const apps = UIApp.getApps().filter(
-        (app) => !current.includes(app.get_id())
+        .filter((child) => child.app.get_id());
+      const currentIds = current.map((child) => child.app.get_id());
+      const apps = UIApp.getApps({ disabled: this._disableAppsOnLoad }).filter(
+        (app) => !currentIds.includes(app.get_id())
       );
       apps.forEach((app) => {
-        lg('[DockDash::_redisplay] app:', app);
-        app.connect('clicked', (_, { event }) => {
-          if (event) {
-            this._docker._onKeyPress(event);
-          } else {
-            app.get_simulation().activate();
-          }
-          app.hide_on_trigger() && this._hide();
-        });
+        this._linkAppToSignal(app);
         const item = this._createAppItem(app);
         this._box.add_child(item);
         item.show(true);
       });
 
       this._adjustIconSize();
+      this._disableAppsOnLoad = false;
+    }
+
+    _linkAppToSignal(app) {
+      app.connect('refresh', (_, props) => this._rewireApp(app, props));
+      app.connect('clicked', (_, { event }) => {
+        if (event) {
+          this._docker._onKeyPress(event);
+        } else {
+          app.get_simulation().activate();
+        }
+        app.hide_on_trigger() && this._hide();
+      });
+      return app;
+    }
+
+    _setAppsDisabledOnLoad() {
+      this._disableAppsOnLoad = true;
+    }
+
+    _disableApps() {
+      this._box
+        .get_children()
+        .filter((child) => child.app.get_id())
+        .forEach(
+          (child) => child.app.can_disable() && (child.app.disabled = true)
+        );
+    }
+
+    _enableApps() {
+      lg('[UIApp::_enableApps]');
+      this._box
+        .get_children()
+        .filter((child) => child.app.get_id())
+        .forEach(
+          (child) => child.app.can_disable() && (child.app.disabled = false)
+        );
     }
 
     _adjustIconSize() {
@@ -481,7 +528,7 @@ var DockDash = GObject.registerClass(
       this._maxWidth = maxWidth;
       this._maxHeight = maxHeight;
 
-      this._queueRedisplay();
+      //this._queueRedisplay();
     }
 
     vfunc_enter_event(event) {

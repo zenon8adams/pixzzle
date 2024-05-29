@@ -176,6 +176,7 @@
   background-color: #2e3436;
   border-radius: 99px;
   padding: 6px 12px;
+  font-weight: bold;
   text-align: center;
   -y-offset: 24px;
 }
@@ -183,7 +184,6 @@
 #UIMainViewer {
   border-radius: 10px;
   border-width: 2em;
-  border-bottom: 0px;
 }
 
 #UIMainViewerLayout {
@@ -203,8 +203,9 @@
 }
 
 #UIThumbnailViewer,
-#UIFolderViewer {
-  width: 10em;
+#UIFolderViewer,
+#UISwapView {
+  min-width: 10em;
   max-width: 10em;
 }
 
@@ -280,6 +281,7 @@
   padding: 5px;
   border-radius: 99px;
 }
+
 .pixzzle-ui-settings-button StIcon {
   icon-size: 32px;
 }

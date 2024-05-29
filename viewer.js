@@ -48,10 +48,9 @@ const {
   getDate,
   filesDateSorter,
   fmt,
-  Constants,
-  ensureActorVisibleInScrollView
+  Constants
 } = Me.imports.utils;
-const { storeScreenshot } = Me.imports.common;
+const { storeScreenshot, ensureActorVisibleInScrollView } = Me.imports.common;
 const Shutter = Me.imports.screenshot;
 const Overlay = Me.imports.overlay;
 const { computePanelPosition } = Me.imports.panel;
@@ -130,6 +129,13 @@ var UIMainViewer = GObject.registerClass(
 
       this.reset();
 
+      this._box = new St.Widget({
+        name: 'UIMainViewerLayout',
+        x_expand: true,
+        y_expand: true
+      });
+      this.add_child(this._box);
+
       this._closeButton = new UIButton({
         style_class: 'pixzzle-ui-close-button',
         child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
@@ -177,45 +183,57 @@ var UIMainViewer = GObject.registerClass(
       this._closeButton.connect('enter-event', this._stopDrag.bind(this));
       this.add_child(this._closeButton);
 
-      this._topMostContainer = new UILayout({
-        name: 'UIMainViewerLayout',
-        vertical: true,
-        x_expand: true,
-        y_expand: true
-      });
-      this.add_child(this._topMostContainer);
-
-      this._splitViewXContainer = new UILayout({
-        name: 'UISplitViewLayout',
-        vertical: false,
-        x_expand: true,
-        reactive: true
-      });
-      this._topMostContainer.add_child(this._splitViewXContainer);
-
-      this._swapViewContainer = new UILayout({
-        name: 'UISwapViewContainer',
-        vertical: true,
-        x_expand: false,
-        reactive: true
-      });
-
-      this._bigViewContainer = new UILayout({
-        name: 'UIBigViewLayout',
-        x_expand: true,
-        y_expand: true,
-        x_align: Clutter.ActorAlign.CENTER,
-        y_align: Clutter.ActorAlign.CENTER
-      });
-
       this._buttonBox = new UILayout({
         name: 'UIButtonBox',
+        x: 0,
+        y: 0,
         vertical: false,
         x_expand: true,
+        y_expand: false,
         x_align: Clutter.ActorAlign.END
       });
-      this._topMostContainer.add_child(this._buttonBox);
+      this._box.add_child(this._buttonBox);
+      this._buttonBox.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this._box,
+          align_axis: Clutter.AlignAxis.Y_AXIS,
+          pivot_point: new Graphene.Point({ x: -1, y: 1 }),
+          factor: 1.0
+        })
+      );
+      this._buttonBox.add_constraint(
+        new Clutter.BindConstraint({
+          source: this._box,
+          coordinate: Clutter.BindCoordinate.WIDTH,
+          offset: 0
+        })
+      );
 
+      this._swapView = new UILayout({
+        name: 'UISwapView',
+        vertical: true,
+        y_expand: true,
+        reactive: true,
+        y_align: Clutter.ActorAlign.FILL
+      });
+      this._swapView.set_clip_to_allocation(true);
+      this._box.add_child(this._swapView);
+      this._swapView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._box,
+          from_edge: Clutter.SnapEdge.TOP,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
+      this._swapView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._buttonBox,
+          from_edge: Clutter.SnapEdge.BOTTOM,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
       this._settingsButton = new UIButton({
         style_class: 'pixzzle-ui-settings-button',
         child: new St.Icon({
@@ -309,36 +327,69 @@ var UIMainViewer = GObject.registerClass(
         name: 'UIThumbnailViewer',
         sibling: this._folderView,
         x_expand: false,
+        y_expand: true,
         visible: true
       });
 
-      this._imageViewer = new UIImageRenderer({
+      this._imageView = new UIImageRenderer({
+        name: 'UIImageRenderer',
+        y_expand: true,
+        x_expand: true,
         anchor: this
       });
-      this._dock = new Docking.DockedDash({ docker: this._imageViewer });
+      this._box.add_child(this._imageView);
+      this._imageView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._box,
+          from_edge: Clutter.SnapEdge.TOP,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
+      this._imageView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._buttonBox,
+          from_edge: Clutter.SnapEdge.BOTTOM,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
+      this._dock = new Docking.DockedDash({
+        height: 0.9 * this.height,
+        docker: this._imageView
+      });
+      this._dock.connect('notify::width', () => this._updateDockPosition());
       this._thumbnailView.connect('replace', (_, shot) => {
-        this._imageViewer._replace(shot);
+        lg(
+          '[UIMainViewer::_init::_thumbnailView::replace] width:',
+          this._imageView.width,
+          'height:',
+          this._imageView.height,
+          'visible:',
+          this._imageView.get_transformed_size()
+        );
+        this._imageView._replace(shot);
         this._emptyView = this._thumbnailView._shotCount() == 0;
         if (this._emptyView) {
           this._swapButton.checked = true;
-          this._imageViewer.abortSnipSession();
+          this._imageView.abortSnipSession();
+          this._dock?._disableApps();
+        } else {
+          this._dock?._enableApps();
         }
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
       this._thumbnailView.connect('notify::loaded', () => {
-        if (!this._skipFirst) {
-          this._skipFirst = true;
-          return;
-        }
-
         lg('[UIMainViewer::_init::_thumbnailView::notify::loaded]');
+        this._emptyView = this._thumbnailView._shotCount() == 0;
+        if (this._emptyView) {
+          this._dock.dash._setAppsDisabledOnLoad();
+        }
         this._toggleSwap(this._swapButton);
       });
 
-      this._splitViewXContainer.add_child(this._bigViewContainer);
-      this._splitViewXContainer.add_child(this._swapViewContainer);
-      this._swapViewContainer.add_child(this._thumbnailView);
-      this._swapViewContainer.add_child(this._folderView);
+      this._swapView.add_child(this._thumbnailView);
+      this._swapView.add_child(this._folderView);
 
       {
         const iconPath = 'icons/pixzzle-ui-collapse-symbolic.png';
@@ -370,7 +421,7 @@ var UIMainViewer = GObject.registerClass(
         this._animateFlatten(me.get_value());
       });
 
-      this._imageViewer.connect('lock-axis', (_, axis) => {
+      this._imageView.connect('lock-axis', (_, axis) => {
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
         /*
@@ -412,7 +463,7 @@ var UIMainViewer = GObject.registerClass(
 
         this._updateDockPosition();
       });
-      this._imageViewer.connect('clean-slate', () => {
+      this._imageView.connect('clean-slate', () => {
         this._maxXSwing = INITIAL_WIDTH;
         this._maxYSwing = INITIAL_HEIGHT;
         const xOffset = this.width - INITIAL_WIDTH;
@@ -421,36 +472,34 @@ var UIMainViewer = GObject.registerClass(
         if (yOffset > 0) this._startY += yOffset;
 
         this._updateSize();
+        this._updateDockPosition();
         this._emptyView = true;
+        lg('[UIMainViewer::_init::_imageView::clean-slate] clean');
       });
-      this._imageViewer.connect('enter-event', this._stopDrag.bind(this));
-      this._imageViewer.connect('switch-active', (me, detail) => {
+      this._imageView.connect('enter-event', this._stopDrag.bind(this));
+      this._imageView.connect('switch-active', (me, detail) => {
         lg('[UIMainViewer::_init::_imageViewer::switch-active]');
         this._thumbnailView._switchActive(detail);
       });
-      this._imageViewer.connect('new-shot', (me, shot) => {
+      this._imageView.connect('new-shot', (me, shot) => {
         this._folderView.addNewShot({ name: shot }).catch(logError);
       });
-      this._imageViewer.connect('drag-action', () => {
-        this._dock._hide();
+      this._imageView.connect('drag-action', () => {
+        this._dock?._hide();
       });
-      this._bigViewContainer.add_child(this._imageViewer);
 
+      this._dock.mount();
       this._loadSettings();
       this.add_child(this._dock);
 
       this.connect('notify::mapped', () => {
-        if (!this._dock.dash) {
-          this._dock.mount();
-          this._updateDockPosition();
-        }
-
         this._animateSettings();
-
         // Run only once for the lifetime of the
         // application
         if (!this._viewInitialized) {
           this._folderView.flatten();
+          this._updateDockPosition();
+
           this._viewInitialized = true;
         }
       });
@@ -460,13 +509,15 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _updateDockPosition() {
-      const [w, h] = this._computeBigViewSize();
-      this._dock._resetPosition({
-        x: this.border_width,
-        y: this.border_width,
-        width: w,
-        height: h
-      });
+      const side = this._dock._slider.swipe;
+      const swipeLeft = side === St.Side.RIGHT;
+      const border = this.border_width;
+      const shotHeight = this._screenshotButton.height;
+      const imageViewHeight = this.height - border * 3 - shotHeight;
+      const x = border + this._swapView.width + 20;
+      const y = border + Math.floor(imageViewHeight - this._dock.height) / 2;
+      const swOff = swipeLeft ? this.width : x * 2 + this._dock.width + 20;
+      this._dock.set_position(swOff - x, y);
     }
 
     get border_width() {
@@ -478,28 +529,19 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _openSnipToolkit() {
-      this._imageViewer._openSnipToolkit();
+      this._imageView._openSnipToolkit();
     }
 
     _computeBigViewSize() {
-      const width =
-        this.width -
-        this.border_width * 2 -
-        this._thumbnailView.width -
-        this._splitViewXContainer.spacing;
-      /*
-       * FIXME: For the height, the BoxLayout `SplitViewXContainer`
-       * forces the this.border-bottom off. I'll use this workaround
-       * of multiplying border-width by 2 to account for the
-       * pushed off bottom border, till I find a fix.
-       */
-      const height =
-        this.height -
-        this.border_width * 2 -
-        this._splitViewXContainer.spacing -
-        this._topMostContainer.bottom_padding -
-        this._topMostContainer.spacing;
-
+      const border = this.border_width;
+      const width = this.width - this._swapView.width - border * 2 - 20;
+      const height = this.height - border * 2 - border - this._buttonBox.height;
+      lg(
+        '[UIMainViewer::_computeBigViewSize] width:',
+        width,
+        'height:',
+        height
+      );
       return [width, height];
     }
 
@@ -666,7 +708,6 @@ var UIMainViewer = GObject.registerClass(
        * at.
        */
       one.visible = true;
-      one.height = 0;
       one.ease({
         height: other.height,
         duration: 300,
@@ -675,7 +716,7 @@ var UIMainViewer = GObject.registerClass(
       other.ease({
         height: 0,
         duration: 300,
-        mode: Clutter.AnimationMode.EASE_IN_OUT,
+        mode: Clutter.AnimationMode.EASE_IN,
         onComplete: () => (other.visible = false)
       });
     }
@@ -742,6 +783,85 @@ var UIMainViewer = GObject.registerClass(
       lg('[UIMainViewer::_onSettingsChange]');
     }
 
+    _bindConstraints(dir) {
+      const ViewDir = {
+        LTR: 0,
+        RTL: 1
+      };
+      const sideParam = {
+        [ViewDir.LTR]: {
+          imageView: {
+            1: {
+              from_edge: Clutter.SnapEdge.LEFT,
+              to_edge: Clutter.SnapEdge.LEFT
+            },
+            2: {
+              from_edge: Clutter.SnapEdge.RIGHT,
+              to_edge: Clutter.SnapEdge.LEFT,
+              offset: -20
+            }
+          },
+          swapView: {
+            factor: 1.0
+          }
+        },
+        [ViewDir.RTL]: {
+          imageView: {
+            1: {
+              from_edge: Clutter.SnapEdge.RIGHT,
+              to_edge: Clutter.SnapEdge.RIGHT
+            },
+            2: {
+              from_edge: Clutter.SnapEdge.LEFT,
+              to_edge: Clutter.SnapEdge.RIGHT,
+              offset: 20
+            }
+          },
+          swapView: {
+            factor: 0.0
+          }
+        }
+      };
+      const side = ['left', 'right'];
+      const swipe = [St.Side.RIGHT, St.Side.LEFT];
+      const thisSide = side[dir];
+      const otherSide = side[(dir + 1) % 2];
+      const constraints = sideParam[dir];
+      lg('[UIMainViewer::_bindConstraints] constraint:', dir);
+      this._imageView.remove_constraint_by_name(
+        `image-view-snap-${otherSide}-1`
+      );
+      this._imageView.remove_constraint_by_name(
+        `image-view-snap-${otherSide}-2`
+      );
+      this._imageView.add_constraint_with_name(
+        `image-view-snap-${thisSide}-1`,
+        new Clutter.SnapConstraint({
+          source: this._box,
+          ...constraints.imageView[1],
+          offset: -this.border_width
+        })
+      );
+      this._imageView.add_constraint_with_name(
+        `image-view-snap-${thisSide}-2`,
+        new Clutter.SnapConstraint({
+          source: this._swapView,
+          ...constraints.imageView[2]
+        })
+      );
+      this._swapView.remove_constraint_by_name(`swap-view-align-${otherSide}`);
+      this._swapView.add_constraint_with_name(
+        `swap-view-align-${thisSide}`,
+        new Clutter.AlignConstraint({
+          source: this._box,
+          align_axis: Clutter.AlignAxis.X_AXIS,
+          ...constraints.swapView
+        })
+      );
+      this._dock._slider.swipe = swipe[dir];
+      this._updateDockPosition();
+    }
+
     _updateSettings() {
       const mainBGColor = getColorSetting(
         Prefs.Fields.MAIN_BG_COLOR,
@@ -766,15 +886,7 @@ var UIMainViewer = GObject.registerClass(
       setFGColor(this._screenshotButton, screenshotButtonFGColor);
 
       const viewIndex = this._settings.get_int(Prefs.Fields.SWAP_VIEWS);
-      const views = [this._bigViewContainer.name, this._thumbnailView.name];
-      const firstChild = this._splitViewXContainer.get_first_child();
-      const firstChildIndex = views.findIndex((v) => v == firstChild.name);
-      if (firstChildIndex !== viewIndex) {
-        this._splitViewXContainer.set_child_above_sibling(
-          ...this._splitViewXContainer.get_children()
-        );
-      }
-
+      this._bindConstraints(viewIndex);
       this._moveFloatingButton(viewIndex);
 
       function getColorSetting(id, settings) {
@@ -896,6 +1008,7 @@ var UIMainViewer = GObject.registerClass(
         this._shutter = null;
       }
 
+      this.dock?.destroy();
       this._dock = null;
       Main.uiGroup.remove_actor(this._settingsButtonTooltip);
       Main.uiGroup.remove_actor(this._swapButtonTooltip);
@@ -938,7 +1051,7 @@ var UIMainViewer = GObject.registerClass(
       this.opacity = newOpacity;
       if (!this._isActive) {
         this.show();
-        this._dock._show();
+        this._dock?._show();
       } else {
         this._closeSettings();
       }
@@ -949,7 +1062,7 @@ var UIMainViewer = GObject.registerClass(
         onComplete: () => {
           if (this._isActive) {
             this.hide();
-            this._dock._hide();
+            this._dock?._hide();
           }
           this._isActive = !this._isActive;
           lg('[UIMainViewer::_toggleUI]');
@@ -1015,20 +1128,7 @@ var UIMainViewer = GObject.registerClass(
     _updateSize() {
       lg('[UIMainViewer::_updateSize]');
       const [x, y, w, h] = this._getGeometry();
-
-      const diff = Math.abs(this.height - h);
-      this._updateSideBarHeight(diff);
       this._setRect(x, y, w, h);
-    }
-
-    _updateSideBarHeight(diff) {
-      if (this._viewInitialized && diff > 0) {
-        if (this._folderView.visible) {
-          this._folderView.height = diff;
-        } else if (this._thumbnailView.visible) {
-          this._thumbnailView.height = diff;
-        }
-      }
     }
 
     _setRect(x, y, w, h) {
@@ -1315,7 +1415,7 @@ var UIMainViewer = GObject.registerClass(
         this._updateDockPosition();
       }
       if (this._dragCursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
-        this._imageViewer._redraw(dx, dy);
+        this._imageView._redraw(dx, dy);
       }
 
       this._dragX += dx;
@@ -1337,7 +1437,7 @@ var UIMainViewer = GObject.registerClass(
         }
         return Clutter.EVENT_STOP;
       }
-      this._imageViewer._onKeyPress(event);
+      this._imageView._onKeyPress(event);
 
       return super.vfunc_key_press_event(event);
     }

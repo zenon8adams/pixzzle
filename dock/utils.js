@@ -22,6 +22,7 @@ const St = imports.gi.St;
 
 const Me = imports.misc.extensionUtils.getCurrentExtension();
 const Docking = Me.imports.dock.docking;
+const Util = Me.imports.utils;
 
 const FRAME_SIZE = 36;
 const FRAME_RATE = 15;
@@ -212,7 +213,9 @@ var AppsScaffold = {
   [AppsID.COPY]: {
     id: AppsID.COPY,
     name: 'Copy Tool (Ctrl+C)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-copy-symbolic.png`,
+    icon: _gfullPathOf('pixzzle-ui-copy-symbolic.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-copy-gray-symbolic.png'),
+    can_disable: true,
     animatable: false,
     simulation: {
       event: {
@@ -226,7 +229,9 @@ var AppsScaffold = {
   [AppsID.SECTION]: {
     id: AppsID.SECTION,
     name: 'Section Tool (Ctrl+Shift+C)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-section-symbolic.png`,
+    icon: _gfullPathOf('pixzzle-ui-section-symbolic.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-section-gray-symbolic.png'),
+    can_disable: true,
     animatable: false,
     simulation: {
       event: {
@@ -241,7 +246,9 @@ var AppsScaffold = {
   [AppsID.SNIP]: {
     id: AppsID.SNIP,
     name: 'Snip Tool (X)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-snip-symbolic.png`,
+    icon: _gfullPathOf('pixzzle-ui-snip-symbolic.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-snip-gray-symbolic.png'),
+    can_disable: true,
     animatable: false,
     simulation: {
       event: {
@@ -255,7 +262,9 @@ var AppsScaffold = {
   [AppsID.OCR]: {
     id: AppsID.OCR,
     name: 'Ocr Tool (O)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-ocr-sprite.png`,
+    icon: _gfullPathOf('pixzzle-ui-ocr-sprite.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-ocr-sprite-gray.png'),
+    can_disable: true,
     animatable: true,
     sprite: {
       size: FRAME_SIZE,
@@ -273,7 +282,9 @@ var AppsScaffold = {
   [AppsID.ROTATE_CLOCKWISE]: {
     id: AppsID.ROTATE_CLOCKWISE,
     name: 'Rotate Picture Clockwise (Ctrl+R)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-cycle-symbolic.png`,
+    icon: _gfullPathOf('pixzzle-ui-cycle-symbolic.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-cycle-gray-symbolic.png'),
+    can_disable: true,
     animatable: false,
     simulation: {
       event: {
@@ -287,7 +298,9 @@ var AppsScaffold = {
   [AppsID.ROTATE_COUNTER_CLOCKWISE]: {
     id: AppsID.ROTATE_COUNTER_CLOCKWISE,
     name: 'Rotate Picture Counter Clockwise (Ctrl+L)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-cycle-counter-symbolic.png`,
+    icon: _gfullPathOf('pixzzle-ui-cycle-counter-symbolic.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-cycle-counter-gray-symbolic.png'),
+    can_disable: true,
     animatable: false,
     simulation: {
       event: {
@@ -301,7 +314,9 @@ var AppsScaffold = {
   [AppsID.TAKE_SCREENSHOT]: {
     id: AppsID.TAKE_SCREENSHOT,
     name: 'Take Screenshot (Ctrl+F10)',
-    icon: `${Me.path}/assets/icons/pixzzle-ui-new-shot-symbolic.png`,
+    icon: _gfullPathOf('pixzzle-ui-new-shot-symbolic.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-new-shot-gray-symbolic.png'),
+    can_disable: false,
     animatable: false,
     simulation: {
       hideOnTrigger: false,
@@ -309,6 +324,16 @@ var AppsScaffold = {
     }
   }
 };
+
+function _dfullPathOf(icon) {
+  const disabledIconPath = Util.getDisabledIconsLocation().get_path();
+  return Util.makePath(disabledIconPath, icon).get_path();
+}
+
+function _gfullPathOf(icon) {
+  const iconsPath = Util.getIconsLocation().get_path();
+  return Util.makePath(iconsPath, icon).get_path();
+}
 
 function registerAppOwner(appID, simProps = {}) {
   for (const prop in simProps) {
