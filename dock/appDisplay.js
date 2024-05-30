@@ -189,6 +189,7 @@ var AppIcon = GObject.registerClass(
       this.set_child(this._iconContainer);
 
       this._setUpApp(app, iconParams);
+      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _createIcon(iconSize) {
@@ -197,7 +198,7 @@ var AppIcon = GObject.registerClass(
 
     _replaceApp(app) {
       const iconParams = {};
-      this._iconContainer.remove_child(this.icon);
+      this._iconContainer.destroy_all_children();
       this._setUpApp(app, this._iconParams);
     }
 
@@ -209,6 +210,13 @@ var AppIcon = GObject.registerClass(
       this.icon = new IconGrid.BaseIcon(app.get_name(), iconParams);
       this._iconContainer.add_child(this.icon);
       this.label_actor = this.icon.label;
+    }
+
+    _onDestroy() {
+      lg('[AppIcon::_onDestroy]');
+      this.app.destroy();
+      this._iconParams = null;
+      this.app = null;
     }
 
     vfunc_leave_event(event) {

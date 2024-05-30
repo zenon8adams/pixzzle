@@ -78,7 +78,7 @@ var DashItemContainer = GObject.registerClass(
       this.connect('notify::scale-y', () => this.queue_relayout());
 
       this.connect('destroy', () => {
-        this.child = null;
+        this.removeChild();
         Main.layoutManager.removeChrome(this.label);
         this.label?.destroy();
       });
@@ -157,7 +157,13 @@ var DashItemContainer = GObject.registerClass(
 
       this.child = actor;
       this.child.y_expand = false;
-      this.add_actor(this.child);
+      this.add_child(this.child);
+    }
+
+    removeChild() {
+      this.child.destroy_all_children();
+      this.destroy_all_children();
+      this.child = null;
     }
 
     show(animate) {
@@ -227,12 +233,6 @@ var Dash = GObject.registerClass(
       });
     }
 
-    _appIdListToHash(apps) {
-      let ids = {};
-      for (let i = 0; i < apps.length; i++) ids[apps[i].get_id()] = apps[i];
-      return ids;
-    }
-
     _hookUpLabel(item, appIcon) {
       item.child.connect('notify::hover', () => {
         this._syncLabel(item, appIcon);
@@ -242,15 +242,6 @@ var Dash = GObject.registerClass(
         this._labelShowing = false;
         item.hideLabel();
       });
-
-      Main.overview.connectObject(
-        'hiding',
-        () => {
-          this._labelShowing = false;
-          item.hideLabel();
-        },
-        item.child
-      );
 
       if (appIcon) {
         appIcon.connect('sync-tooltip', () => {

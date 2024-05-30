@@ -149,7 +149,7 @@ var DockedDash = GObject.registerClass(
         'docker',
         'docker',
         'docker',
-        GObject.ParamFlags.READWRITE | GObject.ParamSpec.CONSTRUCT_ONLY,
+        GObject.ParamFlags.READWRITE | GObject.ParamSpec.CONSTRUCT,
         UIImageRenderer.$gtype
       )
     },
@@ -176,9 +176,6 @@ var DockedDash = GObject.registerClass(
 
       // initialize dock state
       this._dockState = State.HIDDEN;
-    }
-
-    mount() {
       // Create a new dash object
       this.dash = new DockDash.DockDash(this);
       this.dash.connect('notify::mapped', () => this.dash._queueRedisplay());

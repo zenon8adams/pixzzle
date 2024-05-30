@@ -46,10 +46,10 @@ const DASH_MAX_ICON_SIZE = 36;
 
 var DockDashItemContainer = GObject.registerClass(
   class DockDashItemContainer extends Dash.DashItemContainer {
-    _init(app) {
+    _init() {
       super._init();
-      this.app = app;
     }
+
     showLabel() {
       return AppIcons.itemShowLabel.call(this);
     }
@@ -102,6 +102,7 @@ var DockDash = GObject.registerClass(
       this._resetHoverTimeoutId = 0;
       this._labelShowing = false;
 
+      lg('[DockDash::_init]');
       super._init({
         name: 'dash',
         offscreen_redirect: Clutter.OffscreenRedirect.ALWAYS,
@@ -174,33 +175,25 @@ var DockDash = GObject.registerClass(
       this.connect('destroy', this._onDestroy.bind(this));
     }
 
+    _getApps() {
+      return this._box
+        .get_children()
+        .filter((child) => child.child.app && child.child.app.get_id())
+        .map((child) => child.child.app);
+    }
+
     playAnimation() {
       lg(
         '[DockDash::playAnimation] matches:',
-        this._box
-          .get_children()
-          .filter((child) => child.app.get_id() && child.app.animatable())
-          .length
+        this._getApps().filter((app) => app.animatable()).length
       );
-      this._box
-        .get_children()
-        .forEach(
-          (child) =>
-            child.app.get_id() &&
-            child.app.animatable() &&
-            child.app.icon?.play()
-        );
+      this._getApps().forEach((app) => app.animatable() && app.icon?.play());
     }
 
     pauseAnimation() {
-      this._box
-        .get_children()
-        .forEach(
-          (child) =>
-            child.app.get_id() &&
-            child.app.animatable() &&
-            child.app.icon?.stop()
-        );
+      this._getApps().forEach(
+        (app) => app.get_id() && app.animatable() && app.icon?.stop()
+      );
     }
 
     _hide() {
@@ -244,6 +237,7 @@ var DockDash = GObject.registerClass(
         GLib.source_remove(this._requiresVisibilityTimeout);
       this.pauseAnimation();
       this._box.destroy_all_children();
+      this._docker = null;
     }
 
     _hookUpLabel() {
@@ -312,7 +306,7 @@ var DockDash = GObject.registerClass(
     _createAppItem(app) {
       const appIcon = new AppIcons.makeAppIcon(app);
 
-      const item = new DockDashItemContainer(app);
+      const item = new DockDashItemContainer();
       item.setChild(appIcon);
 
       appIcon.connect('notify::hover', (a) => this._ensureItemVisibility(a));
@@ -328,9 +322,9 @@ var DockDash = GObject.registerClass(
 
     _rewireApp(app, props) {
       lg('[DockDash::_rewireApp] props:', Object.entries(props));
-      const item = this._box
-        .get_children()
-        .find((child) => child.app.get_id() === app.get_id());
+      const item = this._getApps().find(
+        (child) => child.get_id() === app.get_id()
+      );
       lg('[DockDash::_rewireApp] item:', item);
       if (item == null) {
         return;
@@ -367,8 +361,8 @@ var DockDash = GObject.registerClass(
       lg('[DockDash::_redisplay] disabled on load:', this._disableAppsOnLoad);
       const current = this._box
         .get_children()
-        .filter((child) => child.app.get_id());
-      const currentIds = current.map((child) => child.app.get_id());
+        .filter((child) => child.child.app.get_id());
+      const currentIds = current.map((child) => child.child.app.get_id());
       const apps = UIApp.getApps({ disabled: this._disableAppsOnLoad }).filter(
         (app) => !currentIds.includes(app.get_id())
       );
@@ -387,7 +381,7 @@ var DockDash = GObject.registerClass(
       app.connect('refresh', (_, props) => this._rewireApp(app, props));
       app.connect('clicked', (_, { event }) => {
         if (event) {
-          this._docker._onKeyPress(event);
+          this._docker?._onKeyPress(event);
         } else {
           app.get_simulation().activate();
         }
@@ -401,22 +395,16 @@ var DockDash = GObject.registerClass(
     }
 
     _disableApps() {
-      this._box
-        .get_children()
-        .filter((child) => child.app.get_id())
-        .forEach(
-          (child) => child.app.can_disable() && (child.app.disabled = true)
-        );
+      this._getApps().forEach(
+        (app) => app.can_disable() && (app.disabled = true)
+      );
     }
 
     _enableApps() {
       lg('[UIApp::_enableApps]');
-      this._box
-        .get_children()
-        .filter((child) => child.app.get_id())
-        .forEach(
-          (child) => child.app.can_disable() && (child.app.disabled = false)
-        );
+      this._getApps().forEach(
+        (app) => app.can_disable() && (app.disabled = false)
+      );
     }
 
     _adjustIconSize() {
@@ -517,7 +505,6 @@ var DockDash = GObject.registerClass(
         item.destroy();
       }
 
-      // to avoid ugly animations, just suppress them like when dash is first loaded.
       this._shownInitially = false;
       this._redisplay();
     }
@@ -528,7 +515,7 @@ var DockDash = GObject.registerClass(
       this._maxWidth = maxWidth;
       this._maxHeight = maxHeight;
 
-      //this._queueRedisplay();
+      this._queueRedisplay();
     }
 
     vfunc_enter_event(event) {
