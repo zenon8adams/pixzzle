@@ -475,6 +475,7 @@ var UIMainViewer = GObject.registerClass(
       this._imageView.connect('switch-active', (me, detail) => {
         lg('[UIMainViewer::_init::_imageViewer::switch-active]');
         this._thumbnailView._switchActive(detail);
+        this._folderView._setFocusOn(detail.current);
       });
       this._imageView.connect('new-shot', (me, shot) => {
         this._folderView
@@ -1626,9 +1627,10 @@ const UIFolderViewer = GObject.registerClass(
           ...params
         });
       });
-      folder._trigger.connect('notify::hover', (item) =>
-        this._ensureItemVisibility(item)
-      );
+      folder._trigger.connect('notify::hover', (item) => {
+        this._ensureItemVisibility(item);
+        this._setFocusOnFolder(folder);
+      });
       if (prepend) {
         this._viewBox.insert_child_at_index(folder, 0);
       } else {
@@ -1737,6 +1739,31 @@ const UIFolderViewer = GObject.registerClass(
           return [idx, d];
         }
       }
+    }
+
+    _setFocusOn(shotName) {
+      const folder = this._findFolderForShot(shotName);
+      ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+      this._setFocusOnFolder(folder);
+    }
+
+    _setFocusOnFolder(folder) {
+      if (folder == null) {
+        const firstDate = this._shotsDate[0];
+        firstDate && this._setFocusOnFolder(this._folders[firstDate]);
+        return;
+      }
+      const allFolders = Object.values(this._folders);
+      allFolders
+        .filter((folder) => !folder.has_effects())
+        .forEach((folder) => folder._addFocusEffect());
+      folder._removeFocusEffect();
+    }
+
+    _findFolderForShot(name) {
+      return Object.values(this._folders).find(
+        (folder) => folder._shots.indexOf(name) !== -1
+      );
     }
 
     async _loadShots() {
@@ -1868,6 +1895,7 @@ const UIFolder = GObject.registerClass(
   class UIFolder extends St.Widget {
     _init(name, shots, gradient, params) {
       super._init({
+        name,
         ...params,
         reactive: true,
         layout_manager: new Clutter.BinLayout()
@@ -1906,6 +1934,19 @@ const UIFolder = GObject.registerClass(
         );
       }
     }
+
+    _addFocusEffect() {
+      const focusEffect = new Shell.BlurEffect({
+        brightness: Constants.FULLY_OPAQUE,
+        mode: Shell.BlurMode.ACTOR,
+        sigma: 5
+      });
+      this.add_effect_with_name('focus-effect', focusEffect);
+    }
+
+    _removeFocusEffect() {
+      this.remove_effect_by_name('focus-effect');
+    }
   }
 );
 
@@ -1942,6 +1983,7 @@ const UIThumbnailViewer = GObject.registerClass(
         this._loadShots(payload)
           .then((shots) => {
             this.emit('replace', shots[0] ?? {});
+            this.sibling._setFocusOnFolder(null);
             onComplete?.();
             this._initialized = true;
             this.notify('loaded');
@@ -2061,6 +2103,7 @@ const UIThumbnailViewer = GObject.registerClass(
       }
 
       shots[next].emit('activate');
+      ensureActorVisibleInScrollView(this._scrollView, shots[next]);
     }
 
     _shotCount() {
