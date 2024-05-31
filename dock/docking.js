@@ -249,12 +249,12 @@ var DockedDash = GObject.registerClass(
       this.connect('destroy', this._onDestroy.bind(this));
     }
 
-    _disableApps() {
-      this.dash._disableApps();
+    _disableApps(appsId) {
+      this.dash._disableApps(appsId);
     }
 
-    _enableApps() {
-      this.dash._enableApps();
+    _enableApps(appsId) {
+      this.dash._enableApps(appsId);
     }
 
     get position() {

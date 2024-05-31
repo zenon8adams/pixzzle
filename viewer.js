@@ -355,20 +355,11 @@ var UIMainViewer = GObject.registerClass(
       });
       this._dock.connect('notify::width', () => this._updateDockPosition());
       this._thumbnailView.connect('replace', (_, shot) => {
-        lg(
-          '[UIMainViewer::_init::_thumbnailView::replace] width:',
-          this._imageView.width,
-          'height:',
-          this._imageView.height,
-          'visible:',
-          this._imageView.get_transformed_size()
-        );
         this._imageView._replace(shot);
         this._emptyView = this._thumbnailView._shotCount() == 0;
         if (this._emptyView) {
           this._swapButton.checked = true;
           this._imageView.abortSnipSession();
-          this._dock._disableApps();
         } else {
           this._dock._enableApps();
         }
@@ -417,6 +408,7 @@ var UIMainViewer = GObject.registerClass(
       });
 
       this._imageView.connect('lock-axis', (_, axis) => {
+        lg('[UIMainViewer::_init::_imageView::lock-axis]');
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
         /*
@@ -469,6 +461,7 @@ var UIMainViewer = GObject.registerClass(
         this._updateSize();
         this._updateDockPosition();
         this._emptyView = true;
+        this._dock._disableApps();
         lg('[UIMainViewer::_init::_imageView::clean-slate] clean');
       });
       this._imageView.connect('enter-event', this._stopDrag.bind(this));
