@@ -50,10 +50,6 @@ var DockAbstractAppIcon = GObject.registerClass(
       super._init(app);
     }
 
-    _onDestroy() {
-      super._onDestroy();
-    }
-
     shouldShowTooltip() {
       return this.hover;
     }

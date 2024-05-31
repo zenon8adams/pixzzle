@@ -48,6 +48,15 @@ const N_AXIS = 4;
 
 var UIImageRenderer = GObject.registerClass(
   {
+    Properties: {
+      anchor: GObject.ParamSpec.object(
+        'anchor',
+        'anchor',
+        'anchor',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+        St.Widget.$gtype
+      )
+    },
     Signals: {
       'lock-axis': { param_types: [Object.prototype] },
       'clean-slate': {},
@@ -58,19 +67,19 @@ var UIImageRenderer = GObject.registerClass(
     }
   },
   class UIImageRenderer extends St.Widget {
-    _init(topParent, params) {
+    _init(params) {
       super._init({
         ...params,
+        name: 'UIImageRenderer',
         reactive: true,
         can_focus: true,
         layout_manager: new Clutter.BinLayout()
       });
-
-      this._topParent = topParent;
-      this._canvas = new Clutter.Canvas();
-      this.set_content(this._canvas);
       this._xpos = 0;
       this._ypos = 0;
+
+      this._canvas = new Clutter.Canvas();
+      this.set_content(this._canvas);
       this._orientationLU = new Array(N_AXIS);
       this._orientation = ViewOrientation.TOP;
       this._snipIndicator = new St.Widget({
@@ -86,7 +95,7 @@ var UIImageRenderer = GObject.registerClass(
       });
       this._ocrText.clutter_text.set_editable(false);
       this._ocrText.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
-      this._topParent.add_child(this._ocrText);
+      this.anchor.add_child(this._ocrText);
 
       this._loadSettings();
 
@@ -100,79 +109,82 @@ var UIImageRenderer = GObject.registerClass(
       };
       this._snipTrigger = null;
 
-      this._canvas.connect('draw', (canvas, context) => {
-        if (this._pixbuf && this._filename) {
-          const [pixWidth, pixHeight] = [
-            this._pixbuf.get_width(),
-            this._pixbuf.get_height()
-          ];
-
-          const [maxWidth, maxHeight] = this._topParent._computeBigViewSize();
-          const [effectiveWidth, effectiveHeight] = [
-            Math.min(pixWidth - this._xpos, maxWidth),
-            Math.min(pixHeight - this._ypos, maxHeight)
-          ];
-          lg(
-            '[UIImageRenderer::_init::_draw] effectiveWidth:',
-            effectiveWidth,
-            'effectiveHeight:',
-            effectiveHeight
-          );
-          const pixbuf = this._pixbuf.new_subpixbuf(
-            this._xpos,
-            this._ypos,
-            effectiveWidth,
-            effectiveHeight
-          );
-          if (pixbuf === null) {
-            lg('[UIImageRenderer::_init::_draw]', 'pixbuf = (null)');
-            return;
-          }
-          this._visibleRegionPixbuf = pixbuf;
-
-          context.save();
-          context.setOperator(Cairo.Operator.CLEAR);
-          context.paint();
-          context.restore();
-          cairo_set_source_pixbuf(
-            context,
-            pixbuf,
-            (maxWidth - effectiveWidth) / 2,
-            (maxHeight - effectiveHeight) / 2
-          );
-          context.paint();
-
-          /*
-           * For a new screenshot, this._ocrScanOnEntry
-           * flag indicates that we want to perform
-           * ocr scan immediately we screenshot the
-           * image.
-           */
-          if (this._ocrScanOnEntry) {
-            this._ocrScanOnEntry = false;
-            this._openSnipToolkit();
-            this._snipIndicator.x = (maxWidth - pixbuf.width) / 2;
-            this._snipIndicator.y = (maxHeight - pixbuf.height) / 2;
-            this._snipIndicator.width = this._pixbuf.width;
-            this._snipIndicator.height = this._pixbuf.height;
-            this._doOCR(this._pixbuf);
-          }
-        } else if (this._filename) {
-          context.save();
-          context.setOperator(Cairo.Operator.CLEAR);
-          context.paint();
-          this._filename = null;
-        }
-      });
+      this._canvas.connect('draw', this._draw.bind(this));
     }
 
     _redraw(deltaX, deltaY) {
       if (this._filename) {
-        const [width, height] = this._topParent._computeBigViewSize();
+        const [width, height] = this._getMaxSize();
         this._render(deltaX, deltaY, width, height);
       } else {
         this._isPanningEnabled = false;
         this._closeSnipToolkit();
+      }
+    }
+
+    _draw(canvas, context) {
+      lg('[UIImageRenderer::_draw] filename:', this._filename);
+      if (this._pixbuf && this._filename) {
+        const [pixWidth, pixHeight] = [
+          this._pixbuf.get_width(),
+          this._pixbuf.get_height()
+        ];
+
+        const [maxWidth, maxHeight] = this._getMaxSize();
+        const [effectiveWidth, effectiveHeight] = [
+          Math.min(pixWidth - this._xpos, maxWidth),
+          Math.min(pixHeight - this._ypos, maxHeight)
+        ];
+        lg(
+          '[UIImageRenderer::_init::_draw] effectiveWidth:',
+          effectiveWidth,
+          'effectiveHeight:',
+          effectiveHeight
+        );
+        const pixbuf = this._pixbuf.new_subpixbuf(
+          this._xpos,
+          this._ypos,
+          effectiveWidth,
+          effectiveHeight
+        );
+        if (pixbuf === null) {
+          lg('[UIImageRenderer::_init::_draw]', 'pixbuf = (null)');
+          return;
+        }
+        this._visibleRegionPixbuf = pixbuf;
+
+        context.save();
+        context.setOperator(Cairo.Operator.CLEAR);
+        context.paint();
+        context.restore();
+        cairo_set_source_pixbuf(
+          context,
+          pixbuf,
+          (maxWidth - effectiveWidth) / 2,
+          (maxHeight - effectiveHeight) / 2
+        );
+        context.paint();
+
+        /*
+         * For a new screenshot, this._ocrScanOnEntry
+         * flag indicates that we want to perform
+         * ocr scan immediately we screenshot the
+         * image.
+         */
+        if (this._ocrScanOnEntry) {
+          this._ocrScanOnEntry = false;
+          this._openSnipToolkit();
+          this._snipIndicator.x = (maxWidth - pixbuf.width) / 2;
+          this._snipIndicator.y = (maxHeight - pixbuf.height) / 2;
+          this._snipIndicator.width = this._pixbuf.width;
+          this._snipIndicator.height = this._pixbuf.height;
+          this._doOCR(this._pixbuf);
+        }
+      } else {
+        context.save();
+        context.setOperator(Cairo.Operator.CLEAR);
+        context.paint();
+        this._filename = null;
       }
     }
 
@@ -219,7 +231,7 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _reload() {
-      const [width, height] = this._topParent._computeBigViewSize();
+      const [width, height] = this.anchor._computeBigViewSize();
       const [pixWidth, pixHeight] = [
         this._pixbuf.get_width(),
         this._pixbuf.get_height()
@@ -230,6 +242,11 @@ var UIImageRenderer = GObject.registerClass(
         Y_AXIS: pixHeight - height
       });
       this._redraw(0, 0);
+    }
+
+    _getMaxSize() {
+      const [width, height] = this.anchor._computeBigViewSize();
+      return [width, height];
     }
 
     _render(deltaX, deltaY, maxWidth, maxHeight) {
@@ -310,10 +327,7 @@ var UIImageRenderer = GObject.registerClass(
 
     _copyImageToClipboard(pixbuf, message, onComplete = null) {
       if (pixbuf == null) {
-        this._notifyUser(
-          'No image is available',
-          'Click the `Add New` button to add screenshot'
-        );
+        this._notifyOfEmptyView();
         return;
       }
       if (this._clipboardCopyCancellable) {
@@ -374,6 +388,13 @@ var UIImageRenderer = GObject.registerClass(
       notification.setTransient(true);
       Main.messageTray.add(source);
       source.showNotification(notification);
+    }
+
+    _notifyOfEmptyView() {
+      this._notifyUser(
+        'No image is available',
+        'Click the `Add New` button to add screenshot'
+      );
     }
 
     _updateToolkits() {
@@ -641,8 +662,8 @@ var UIImageRenderer = GObject.registerClass(
       let overshootX = 0,
         overshootY = 0;
 
-      leftX = leftX - this._topParent.x - this._topParent.border_width;
-      topY = topY - this._topParent.y - this._topParent.border_width;
+      leftX = leftX - this.anchor.x - this.anchor.border_width;
+      topY = topY - this.anchor.y - this.anchor.border_width;
       if (leftX < 0) {
         overshootX = leftX;
         leftX = 0;
@@ -668,6 +689,9 @@ var UIImageRenderer = GObject.registerClass(
 
     _onKeyPress(event) {
       const symbol = event.keyval;
+      if (!this._canUseKey(symbol)) {
+        return;
+      }
       if (symbol === Clutter.KEY_Escape) {
         const before = this._snipIndicator.visible;
         this.abortSnipSession();
@@ -709,7 +733,10 @@ var UIImageRenderer = GObject.registerClass(
           'file to be deleted:',
           this._shotWidget?._filename
         );
-        this._shotWidget?.emit('delete');
+        const permanently = !!(
+          event.modifier_state & Clutter.ModifierType.SHIFT_MASK
+        );
+        this._shotWidget?.emit('delete', { permanently });
         return Clutter.EVENT_STOP;
       } else if (symbol === Clutter.KEY_Left) {
         this.emit('switch-active', {
@@ -741,6 +768,16 @@ var UIImageRenderer = GObject.registerClass(
       }
 
       return Clutter.EVENT_PROPAGATE;
+    }
+
+    _canUseKey(symbol) {
+      const imageManipKeys = Object.keys(this._snipActions);
+      if (this._pixbuf == null && imageManipKeys.find(key => symbol == key)) {
+        this._notifyOfEmptyView();
+        return false;
+      }
+
+      return true;
     }
 
     _onPress(event, button, sequence) {
@@ -795,6 +832,10 @@ var UIImageRenderer = GObject.registerClass(
       const [x, y] = [event.x, event.y];
       if (!this._dragButton) {
         this._updateCursor();
+        return Clutter.EVENT_STOP;
+      }
+
+      if (!this._pixbuf) {
         return Clutter.EVENT_STOP;
       }
 
@@ -1081,7 +1122,7 @@ const UIOcrTip = GObject.registerClass(
       }
     }
 
-    _onMotion(event) {
+    _onMotion(event, sequence) {
       return Clutter.EVENT_STOP;
     }
 

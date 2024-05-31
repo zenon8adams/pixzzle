@@ -105,12 +105,20 @@ var UIDialog = GObject.registerClass(
       });
       this.add_child(this._content);
 
-      this._spacing = new St.Widget({
+      this._tipsBox = new St.Widget({
+        x_expand: true,
+        y_expand: true
+      });
+      this.add_child(this._tipsBox);
+
+      this._tips = new St.Label({
         x_expand: true,
         y_expand: true,
-        height: 40
+        x_align: Clutter.ActorAlign.FILL,
+        visible: false
       });
-      this.add_child(this._spacing);
+      this._tips.clutter_text.set_use_markup(true);
+      this._tipsBox.add_child(this._tips);
 
       this._buttonBox = new St.BoxLayout({
         vertical: false,
@@ -138,7 +146,7 @@ var UIDialog = GObject.registerClass(
 
       this.set_width(400);
       /* Set default focus button to accept button */
-      this._cycleFocus(ModalReply.OKAY);
+      this._cycleFocus(ModalReply.CANCEL);
 
       this.anchor.connect('destroy', this._onDestroy.bind(this));
       this._acceptButton.connect('clicked', () => this.close(ModalReply.OKAY));
@@ -149,7 +157,7 @@ var UIDialog = GObject.registerClass(
     }
 
     display(dialogue, cb) {
-      const { ok, cancel, icon, header, prompt } = dialogue;
+      const { ok, cancel, icon, header, prompt, tips } = dialogue;
       if (!this._headerIcon && icon) {
         this._headerIcon = new UIIcon(icon);
         this._headerContainer.insert_child_at_index(this._headerIcon, 0);
@@ -160,6 +168,7 @@ var UIDialog = GObject.registerClass(
       cancel && this._cancelButton.set_label(cancel);
       header && this._headerText.set_text(header);
       prompt && this._content.set_text(prompt);
+      this._setTip(tips);
 
       this._replyFn = cb;
       this.open();
@@ -227,14 +236,26 @@ var UIDialog = GObject.registerClass(
       }
     }
 
+    _setTip(info) {
+      this._tips.visible = !!info;
+      if (!info) {
+        this._tipsBox.set_height(40);
+        return;
+      }
+      this._tipsBox.set_height(-1);
+
+      let tip = '\n';
+      tip += info;
+      tip += '\n';
+      this._tips.clutter_text.set_markup(tip);
+    }
+
     _onDestroy() {
       if (this._timeoutId) {
         GLib.Source.remove(this._timeoutId);
         this._timeoutId = null;
       }
       _modalDialog = null;
-
-      Main.layoutManager.removeChrome(this);
     }
 
     vfunc_key_press_event(event) {

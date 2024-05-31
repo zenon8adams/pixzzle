@@ -16,13 +16,14 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-const { Gio, GLib } = imports.gi;
+const { Gio, GLib, Clutter } = imports.gi;
 
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
 var Constants = {
-    FULLY_OPAQUE: 255
+  FULLY_OPAQUE: 255,
+  SCROLL_TIME: 100
 };
 
 var SCHEMA_NAME = 'org.gnome.shell.extensions.pixzzle';
@@ -47,10 +48,12 @@ function inflateSettings() {
   return settings;
 }
 
-const _getShotStore = function () {
-  const path = Gio.File.new_for_path(
-    GLib.build_filenamev(Array.from(arguments))
-  );
+function makePath() {
+  return Gio.File.new_for_path(GLib.build_filenamev(Array.from(arguments)));
+}
+
+const _getStore = function () {
+  const path = makePath(...arguments);
   try {
     path.make_directory_with_parents(null);
   } catch (e) {
@@ -63,11 +66,19 @@ const _getShotStore = function () {
 };
 
 function getShotsLocation() {
-  return _getShotStore(GLib.get_user_cache_dir(), 'extension', SCHEMA_NAME);
+  return _getStore(GLib.get_user_cache_dir(), 'extension', SCHEMA_NAME);
 }
 
 function getThumbnailsLocation() {
-  return _getShotStore(getShotsLocation().get_path(), '.thumbnail');
+  return _getStore(getShotsLocation().get_path(), '.thumbnail');
+}
+
+function getDisabledIconsLocation() {
+  return _getStore(GLib.get_tmp_dir(), '.disabled-icons');
+}
+
+function getIconsLocation() {
+  return _getStore(Me.path, 'assets', 'icons');
 }
 
 function getDate(fullname) {

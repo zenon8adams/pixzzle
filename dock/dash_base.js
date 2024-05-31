@@ -42,7 +42,6 @@ var DashIcon = GObject.registerClass(
       });
     }
 
-    // Disable scale-n-fade methods used during DND by parent
     scaleAndFade() {}
 
     undoScaleAndFade() {}
@@ -61,7 +60,7 @@ var DashItemContainer = GObject.registerClass(
         scale_x: 0,
         scale_y: 0,
         opacity: 0,
-        x_expand: true,
+        x_expand: false,
         x_align: Clutter.ActorAlign.CENTER
       });
 
@@ -79,7 +78,8 @@ var DashItemContainer = GObject.registerClass(
       this.connect('notify::scale-y', () => this.queue_relayout());
 
       this.connect('destroy', () => {
-        if (this.child != null) this.child.destroy();
+        this.child = null;
+        Main.layoutManager.removeChrome(this.label);
         this.label?.destroy();
       });
     }
@@ -156,7 +156,7 @@ var DashItemContainer = GObject.registerClass(
       this.destroy_all_children();
 
       this.child = actor;
-      this.child.y_expand = true;
+      this.child.y_expand = false;
       this.add_actor(this.child);
     }
 

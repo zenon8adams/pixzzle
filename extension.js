@@ -36,6 +36,7 @@ class Extension {
 
   disable() {
     this._shotUI.destroy();
+    this._shotUI = null;
     lg('stop');
   }
 }
