@@ -48,15 +48,6 @@ const N_AXIS = 4;
 
 var UIImageRenderer = GObject.registerClass(
   {
-    Properties: {
-      anchor: GObject.ParamSpec.object(
-        'anchor',
-        'anchor',
-        'anchor',
-        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
-        St.Widget.$gtype
-      )
-    },
     Signals: {
       'lock-axis': { param_types: [Object.prototype] },
       'clean-slate': {},
@@ -67,17 +58,20 @@ var UIImageRenderer = GObject.registerClass(
     }
   },
   class UIImageRenderer extends St.Widget {
-    _init(params) {
+    _init(anchor) {
       super._init({
-        ...params,
         name: 'UIImageRenderer',
         reactive: true,
         can_focus: true,
+        y_expand: true,
+        x_expand: true,
         layout_manager: new Clutter.BinLayout()
       });
       this._xpos = 0;
       this._ypos = 0;
+      this._anchor = anchor;
 
+      lg('[UIImageRenderer::_init]');
       this._canvas = new Clutter.Canvas();
       this.set_content(this._canvas);
       this._orientationLU = new Array(N_AXIS);
@@ -95,7 +89,7 @@ var UIImageRenderer = GObject.registerClass(
       });
       this._ocrText.clutter_text.set_editable(false);
       this._ocrText.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
-      this.anchor.add_child(this._ocrText);
+      this._anchor.add_child(this._ocrText);
 
       this._loadSettings();
 
@@ -110,6 +104,7 @@ var UIImageRenderer = GObject.registerClass(
       this._snipTrigger = null;
 
       this._canvas.connect('draw', this._draw.bind(this));
+      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _redraw(deltaX, deltaY) {
@@ -231,7 +226,7 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _reload() {
-      const [width, height] = this.anchor._computeBigViewSize();
+      const [width, height] = this._anchor._computeBigViewSize();
       const [pixWidth, pixHeight] = [
         this._pixbuf.get_width(),
         this._pixbuf.get_height()
@@ -245,7 +240,7 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _getMaxSize() {
-      const [width, height] = this.anchor._computeBigViewSize();
+      const [width, height] = this._anchor._computeBigViewSize();
       return [width, height];
     }
 
@@ -625,7 +620,7 @@ var UIImageRenderer = GObject.registerClass(
 
     _loadSettings() {
       this._settings = inflateSettings();
-      this._settingsChangedId = this._settings.connect(
+      this._settingsWatchId = this._settings.connect(
         'changed',
         this._onSettingsChange.bind(this)
       );
@@ -662,8 +657,8 @@ var UIImageRenderer = GObject.registerClass(
       let overshootX = 0,
         overshootY = 0;
 
-      leftX = leftX - this.anchor.x - this.anchor.border_width;
-      topY = topY - this.anchor.y - this.anchor.border_width;
+      leftX = leftX - this._anchor.x - this._anchor.border_width;
+      topY = topY - this._anchor.y - this._anchor.border_width;
       if (leftX < 0) {
         overshootX = leftX;
         leftX = 0;
@@ -772,7 +767,7 @@ var UIImageRenderer = GObject.registerClass(
 
     _canUseKey(symbol) {
       const imageManipKeys = Object.keys(this._snipActions);
-      if (this._pixbuf == null && imageManipKeys.find(key => symbol == key)) {
+      if (this._pixbuf == null && imageManipKeys.find((key) => symbol == key)) {
         this._notifyOfEmptyView();
         return false;
       }
@@ -889,6 +884,12 @@ var UIImageRenderer = GObject.registerClass(
       this._dragX += dx;
       this._dragY += dy;
       return Clutter.EVENT_PROPAGATE;
+    }
+
+    _onDestroy() {
+      this._settings.disconnect(this._settingsWatchId);
+      this._settingsWatchId = null;
+      this._anchor = null;
     }
 
     vfunc_button_press_event(event) {

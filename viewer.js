@@ -331,12 +331,7 @@ var UIMainViewer = GObject.registerClass(
         visible: true
       });
 
-      this._imageView = new UIImageRenderer({
-        name: 'UIImageRenderer',
-        y_expand: true,
-        x_expand: true,
-        anchor: this
-      });
+      this._imageView = new UIImageRenderer(this);
       this._box.add_child(this._imageView);
       this._imageView.add_constraint(
         new Clutter.SnapConstraint({
@@ -373,9 +368,9 @@ var UIMainViewer = GObject.registerClass(
         if (this._emptyView) {
           this._swapButton.checked = true;
           this._imageView.abortSnipSession();
-          this._dock?._disableApps();
+          this._dock._disableApps();
         } else {
-          this._dock?._enableApps();
+          this._dock._enableApps();
         }
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
@@ -482,14 +477,14 @@ var UIMainViewer = GObject.registerClass(
         this._thumbnailView._switchActive(detail);
       });
       this._imageView.connect('new-shot', (me, shot) => {
-        this._folderView.addNewShot({ name: shot }).catch(logError);
+        this._folderView
+          .addNewShot({ name: shot })
+          .then(() => this._dock._show())
+          .catch(logError);
       });
       this._imageView.connect('drag-action', () => {
-        this._dock?._hide();
+        this._dock._hide();
       });
-
-      this._dock.mount();
-      this._loadSettings();
       this.add_child(this._dock);
 
       this.connect('notify::mapped', () => {
@@ -504,6 +499,7 @@ var UIMainViewer = GObject.registerClass(
         }
       });
 
+      this._loadSettings();
       this.connect('destroy', this._onDestroy.bind(this));
       this._reload_theme();
     }
@@ -769,7 +765,7 @@ var UIMainViewer = GObject.registerClass(
     _loadSettings() {
       this._settings = inflateSettings();
       this._shortcutsBindingIds = [];
-      this._settingsChangedId = this._settings.connect(
+      this._settingsWatchId = this._settings.connect(
         'changed',
         this._onSettingsChange.bind(this)
       );
@@ -784,6 +780,10 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _bindConstraints(dir) {
+      if (this._bindDir === dir) {
+        return;
+      }
+
       const ViewDir = {
         LTR: 0,
         RTL: 1
@@ -860,6 +860,11 @@ var UIMainViewer = GObject.registerClass(
       );
       this._dock._slider.swipe = swipe[dir];
       this._updateDockPosition();
+
+      /*
+       * Don't bind to the same direction twice.
+       */
+      this._bindDir = dir;
     }
 
     _updateSettings() {
@@ -999,8 +1004,7 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _onDestroy() {
-      this._watcher?.destroy();
-      this._watcher = null;
+      this._close(true);
       if (this._shutter) {
         this._shutter.disconnect(this._shutterClosingHandler);
         this._shutter.disconnect(this._shutterNewShotHandler);
@@ -1008,14 +1012,21 @@ var UIMainViewer = GObject.registerClass(
         this._shutter = null;
       }
 
-      this.dock?.destroy();
-      this._dock = null;
+      this._watcher?.destroy();
+      this._dock.destroy();
+      this._settings.disconnect(this._settingsWatchId);
+      this._unbindShortcuts();
       Main.uiGroup.remove_actor(this._settingsButtonTooltip);
       Main.uiGroup.remove_actor(this._swapButtonTooltip);
-      Main.layoutManager.removeChrome(this);
       this._settingsButtonTooltip.destroy();
       this._swapButtonTooltip.destroy();
-      this._unbindShortcuts();
+
+      Main.layoutManager.removeChrome(this);
+
+      this._dock = null;
+      this._watcher = null;
+      this._settings = null;
+      this._settingsWatchId = null;
     }
 
     _showUI() {
@@ -1051,7 +1062,7 @@ var UIMainViewer = GObject.registerClass(
       this.opacity = newOpacity;
       if (!this._isActive) {
         this.show();
-        this._dock?._show();
+        this._dock._show();
       } else {
         this._closeSettings();
       }
@@ -1062,7 +1073,7 @@ var UIMainViewer = GObject.registerClass(
         onComplete: () => {
           if (this._isActive) {
             this.hide();
-            this._dock?._hide();
+            this._dock._hide();
           }
           this._isActive = !this._isActive;
           lg('[UIMainViewer::_toggleUI]');
@@ -1916,7 +1927,7 @@ const UIThumbnailViewer = GObject.registerClass(
         'sibling',
         'sibling',
         'sibling',
-        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
         UIFolderViewer.$gtype
       )
     }

@@ -85,7 +85,7 @@ var UIOverlay = GObject.registerClass(
 
       this._monitorBins = [];
       this._rebuildMonitorBins();
-      this.monitorChangeID = Main.layoutManager.connect(
+      this._monitorChangeID = Main.layoutManager.connect(
         'monitors-changed',
         () => {
           this._close();
@@ -104,7 +104,7 @@ var UIOverlay = GObject.registerClass(
 
     _onDestroy() {
       Main.sessionMode.disconnect(this.sessionUpdateID);
-      Main.layoutManager.disconnect(this.monitorChangeID);
+      Main.layoutManager.disconnect(this._monitorChangeID);
       if (this._timeoutId) {
         GLib.Source.remove(this._timeoutId);
         this._timeoutId = null;

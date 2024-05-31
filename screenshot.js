@@ -918,8 +918,6 @@ var UIShutter = GObject.registerClass(
         reactive: true
       });
 
-      this._settings = inflateSettings();
-
       // The full-screen screenshot has a separate container so that we can
       // show it without the screenshot UI fade-in for a nicer animation.
       this._stageScreenshotContainer = new St.Widget({ visible: false });
