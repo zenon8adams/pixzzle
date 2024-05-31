@@ -101,8 +101,8 @@ var DashSlideContainer = GObject.registerClass(
       let childBox = new Clutter.ActorBox();
 
       if (this.swipe === St.Side.LEFT) {
-        childBox.x1 = childWidth * (this.slideX - 1);
-        childBox.x2 = childWidth * this.slideX;
+        childBox.x1 = childWidth * (this.slideX - 1) + EDGE_THICKNESS;
+        childBox.x2 = childWidth * this.slideX - EDGE_THICKNESS;
       } else {
         childBox.x1 = 0;
         childBox.x2 = childWidth;
@@ -114,9 +114,9 @@ var DashSlideContainer = GObject.registerClass(
 
       if (this.swipe === St.Side.LEFT) {
         this.child.set_clip(
-          -childBox.x1,
+          -childBox.x1 + EDGE_THICKNESS,
           -childBox.y1,
-          -childBox.x1 + availWidth,
+          -childBox.x1 + availWidth + EDGE_THICKNESS,
           -childBox.y1 + availHeight
         );
       } else {
@@ -133,10 +133,8 @@ var DashSlideContainer = GObject.registerClass(
       let [minWidth, natWidth] = super.vfunc_get_preferred_width(
         forHeight || 0
       );
-      if (this.swipe === St.Side.RIGHT) {
-        minWidth = minWidth * this.slideX;
-        natWidth = natWidth * this.slideX;
-      }
+      minWidth = minWidth * this.slideX;
+      natWidth = natWidth * this.slideX;
       return [minWidth, natWidth];
     }
   }
@@ -249,12 +247,12 @@ var DockedDash = GObject.registerClass(
       this.connect('destroy', this._onDestroy.bind(this));
     }
 
-    _disableApps() {
-      this.dash._disableApps();
+    _disableApps(appsId) {
+      this.dash._disableApps(appsId);
     }
 
-    _enableApps() {
-      this.dash._enableApps();
+    _enableApps(appsId) {
+      this.dash._enableApps(appsId);
     }
 
     get position() {

@@ -198,7 +198,8 @@ var AppIcon = GObject.registerClass(
 
     _replaceApp(app) {
       const iconParams = {};
-      this._iconContainer.destroy_all_children();
+      this._iconContainer.remove_child(this.icon);
+      this.icon.destroy();
       this._setUpApp(app, this._iconParams);
     }
 

@@ -236,7 +236,6 @@ var DockDash = GObject.registerClass(
       if (this._requiresVisibilityTimeout)
         GLib.source_remove(this._requiresVisibilityTimeout);
       this.pauseAnimation();
-      this._box.destroy_all_children();
       this._docker = null;
     }
 
@@ -322,9 +321,9 @@ var DockDash = GObject.registerClass(
 
     _rewireApp(app, props) {
       lg('[DockDash::_rewireApp] props:', Object.entries(props));
-      const item = this._getApps().find(
-        (child) => child.get_id() === app.get_id()
-      );
+      const item = this._box
+        .get_children()
+        .find((child) => child.child.app.get_id() === app.get_id());
       lg('[DockDash::_rewireApp] item:', item);
       if (item == null) {
         return;
@@ -394,17 +393,22 @@ var DockDash = GObject.registerClass(
       this._disableAppsOnLoad = true;
     }
 
-    _disableApps() {
-      this._getApps().forEach(
-        (app) => app.can_disable() && (app.disabled = true)
-      );
+    _disableApps(appsId) {
+      lg('[UIApp::_disableApps]');
+      const apps = this._filterAppsByIds(appsId);
+      apps.forEach((app) => app.can_disable() && (app.disabled = true));
     }
 
-    _enableApps() {
+    _enableApps(appsId) {
       lg('[UIApp::_enableApps]');
-      this._getApps().forEach(
-        (app) => app.can_disable() && (app.disabled = false)
-      );
+      const apps = this._filterAppsByIds(appsId);
+      apps.forEach((app) => app.can_disable() && (app.disabled = false));
+    }
+
+    _filterAppsByIds(appsId) {
+      return appsId == null
+        ? this._getApps()
+        : this._getApps().filter((app) => appsId.include(app.get_id()));
     }
 
     _adjustIconSize() {

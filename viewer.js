@@ -355,20 +355,12 @@ var UIMainViewer = GObject.registerClass(
       });
       this._dock.connect('notify::width', () => this._updateDockPosition());
       this._thumbnailView.connect('replace', (_, shot) => {
-        lg(
-          '[UIMainViewer::_init::_thumbnailView::replace] width:',
-          this._imageView.width,
-          'height:',
-          this._imageView.height,
-          'visible:',
-          this._imageView.get_transformed_size()
-        );
         this._imageView._replace(shot);
+        this._folderView._setFocusOn(shot.name);
         this._emptyView = this._thumbnailView._shotCount() == 0;
         if (this._emptyView) {
           this._swapButton.checked = true;
           this._imageView.abortSnipSession();
-          this._dock._disableApps();
         } else {
           this._dock._enableApps();
         }
@@ -417,6 +409,7 @@ var UIMainViewer = GObject.registerClass(
       });
 
       this._imageView.connect('lock-axis', (_, axis) => {
+        lg('[UIMainViewer::_init::_imageView::lock-axis]');
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
         /*
@@ -469,13 +462,13 @@ var UIMainViewer = GObject.registerClass(
         this._updateSize();
         this._updateDockPosition();
         this._emptyView = true;
+        this._dock._disableApps();
         lg('[UIMainViewer::_init::_imageView::clean-slate] clean');
       });
       this._imageView.connect('enter-event', this._stopDrag.bind(this));
       this._imageView.connect('switch-active', (me, detail) => {
         lg('[UIMainViewer::_init::_imageViewer::switch-active]');
         this._thumbnailView._switchActive(detail);
-        this._folderView._setFocusOn(detail.current);
       });
       this._imageView.connect('new-shot', (me, shot) => {
         this._folderView
@@ -667,7 +660,9 @@ var UIMainViewer = GObject.registerClass(
       this._animateSwap();
       // folder hidden
       if (widget.checked) {
-        this._crossSlideAnimate(this._folderView, this._thumbnailView);
+        // Bring the active folder view into focus
+        this._crossSlideAnimate(this._folderView, this._thumbnailView, 
+         () => this._folderView._setFocusOnCurrentFolder());
       } else {
         this._crossSlideAnimate(this._thumbnailView, this._folderView);
       }
@@ -691,7 +686,7 @@ var UIMainViewer = GObject.registerClass(
       }
     }
 
-    _crossSlideAnimate(one, other) {
+    _crossSlideAnimate(one, other, cb) {
       /*
        * Changing the height of an actor also
        * changes its minimum height. If we intend
@@ -708,7 +703,8 @@ var UIMainViewer = GObject.registerClass(
       one.ease({
         height: other.height,
         duration: 300,
-        mode: Clutter.AnimationMode.EASE_IN_OUT
+        mode: Clutter.AnimationMode.EASE_IN_OUT,
+        onComplete: () => cb?.()
       });
       other.ease({
         height: 0,
@@ -1483,12 +1479,13 @@ var UIMainViewer = GObject.registerClass(
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
       global.display.set_cursor(Meta.Cursor.DEFAULT);
+      global.stage.set_key_focus(global.stage);
       return super.vfunc_leave_event(event);
     }
 
     vfunc_enter_event(event) {
       lg('[UIMainViewer::vfunc_enter_event]');
-      this.grab_key_focus();
+      global.stage.set_key_focus(this);
       return super.vfunc_enter_event(event);
     }
   }
@@ -1743,8 +1740,10 @@ const UIFolderViewer = GObject.registerClass(
 
     _setFocusOn(shotName) {
       const folder = this._findFolderForShot(shotName);
-      ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
-      this._setFocusOnFolder(folder);
+      if (folder != null) {
+        ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+        this._setFocusOnFolder(folder);
+      }
     }
 
     _setFocusOnFolder(folder) {
@@ -1755,15 +1754,23 @@ const UIFolderViewer = GObject.registerClass(
       }
       const allFolders = Object.values(this._folders);
       allFolders
-        .filter((folder) => !folder.has_effects())
+        .filter((folder) => !folder.get_effect('focus-effect'))
         .forEach((folder) => folder._addFocusEffect());
       folder._removeFocusEffect();
     }
 
-    _findFolderForShot(name) {
-      return Object.values(this._folders).find(
-        (folder) => folder._shots.indexOf(name) !== -1
+    _setFocusOnCurrentFolder() {
+      const allFolders = Object.values(this._folders);
+      const folder = allFolders.find(
+        (folder) => !folder.get_effect('focus-effect')
       );
+      this._setFocusOnFolder(folder);
+      ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+    }
+
+    _findFolderForShot(name) {
+      const folders = Object.values(this._folders);
+      return folders.find((folder) => folder._shots.indexOf(name) !== -1);
     }
 
     async _loadShots() {
@@ -1983,7 +1990,6 @@ const UIThumbnailViewer = GObject.registerClass(
         this._loadShots(payload)
           .then((shots) => {
             this.emit('replace', shots[0] ?? {});
-            this.sibling._setFocusOnFolder(null);
             onComplete?.();
             this._initialized = true;
             this.notify('loaded');
