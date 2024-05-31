@@ -660,7 +660,9 @@ var UIMainViewer = GObject.registerClass(
       this._animateSwap();
       // folder hidden
       if (widget.checked) {
-        this._crossSlideAnimate(this._folderView, this._thumbnailView);
+        // Bring the active folder view into focus
+        this._crossSlideAnimate(this._folderView, this._thumbnailView, 
+         () => this._folderView._setFocusOnCurrentFolder());
       } else {
         this._crossSlideAnimate(this._thumbnailView, this._folderView);
       }
@@ -684,7 +686,7 @@ var UIMainViewer = GObject.registerClass(
       }
     }
 
-    _crossSlideAnimate(one, other) {
+    _crossSlideAnimate(one, other, cb) {
       /*
        * Changing the height of an actor also
        * changes its minimum height. If we intend
@@ -701,7 +703,8 @@ var UIMainViewer = GObject.registerClass(
       one.ease({
         height: other.height,
         duration: 300,
-        mode: Clutter.AnimationMode.EASE_IN_OUT
+        mode: Clutter.AnimationMode.EASE_IN_OUT,
+        onComplete: () => cb?.()
       });
       other.ease({
         height: 0,
@@ -1476,12 +1479,13 @@ var UIMainViewer = GObject.registerClass(
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
       global.display.set_cursor(Meta.Cursor.DEFAULT);
+      global.stage.set_key_focus(global.stage);
       return super.vfunc_leave_event(event);
     }
 
     vfunc_enter_event(event) {
       lg('[UIMainViewer::vfunc_enter_event]');
-      this.grab_key_focus();
+      global.stage.set_key_focus(this);
       return super.vfunc_enter_event(event);
     }
   }
@@ -1753,6 +1757,15 @@ const UIFolderViewer = GObject.registerClass(
         .filter((folder) => !folder.get_effect('focus-effect'))
         .forEach((folder) => folder._addFocusEffect());
       folder._removeFocusEffect();
+    }
+
+    _setFocusOnCurrentFolder() {
+      const allFolders = Object.values(this._folders);
+      const folder = allFolders.find(
+        (folder) => !folder.get_effect('focus-effect')
+      );
+      this._setFocusOnFolder(folder);
+      ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
     }
 
     _findFolderForShot(name) {

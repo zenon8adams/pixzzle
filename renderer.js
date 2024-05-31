@@ -226,7 +226,7 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _reload() {
-      const [width, height] = this._anchor._computeBigViewSize();
+      const [width, height] = this._getMaxSize();
       const [pixWidth, pixHeight] = [
         this._pixbuf.get_width(),
         this._pixbuf.get_height()
