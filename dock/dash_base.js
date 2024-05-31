@@ -42,7 +42,6 @@ var DashIcon = GObject.registerClass(
       });
     }
 
-    // Disable scale-n-fade methods used during DND by parent
     scaleAndFade() {}
 
     undoScaleAndFade() {}
@@ -61,7 +60,7 @@ var DashItemContainer = GObject.registerClass(
         scale_x: 0,
         scale_y: 0,
         opacity: 0,
-        x_expand: true,
+        x_expand: false,
         x_align: Clutter.ActorAlign.CENTER
       });
 
@@ -79,7 +78,8 @@ var DashItemContainer = GObject.registerClass(
       this.connect('notify::scale-y', () => this.queue_relayout());
 
       this.connect('destroy', () => {
-        if (this.child != null) this.child.destroy();
+        this.removeChild();
+        Main.layoutManager.removeChrome(this.label);
         this.label?.destroy();
       });
     }
@@ -156,8 +156,14 @@ var DashItemContainer = GObject.registerClass(
       this.destroy_all_children();
 
       this.child = actor;
-      this.child.y_expand = true;
-      this.add_actor(this.child);
+      this.child.y_expand = false;
+      this.add_child(this.child);
+    }
+
+    removeChild() {
+      this.child.destroy_all_children();
+      this.destroy_all_children();
+      this.child = null;
     }
 
     show(animate) {
@@ -227,12 +233,6 @@ var Dash = GObject.registerClass(
       });
     }
 
-    _appIdListToHash(apps) {
-      let ids = {};
-      for (let i = 0; i < apps.length; i++) ids[apps[i].get_id()] = apps[i];
-      return ids;
-    }
-
     _hookUpLabel(item, appIcon) {
       item.child.connect('notify::hover', () => {
         this._syncLabel(item, appIcon);
@@ -242,15 +242,6 @@ var Dash = GObject.registerClass(
         this._labelShowing = false;
         item.hideLabel();
       });
-
-      Main.overview.connectObject(
-        'hiding',
-        () => {
-          this._labelShowing = false;
-          item.hideLabel();
-        },
-        item.child
-      );
 
       if (appIcon) {
         appIcon.connect('sync-tooltip', () => {

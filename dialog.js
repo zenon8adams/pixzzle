@@ -38,14 +38,14 @@ var UIDialog = GObject.registerClass(
         'anchor',
         'anchor',
         'anchor',
-        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
         St.Widget.$gtype
       ),
       overlay: GObject.ParamSpec.object(
         'overlay',
         'overlay',
         'overlay',
-        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
         St.Widget.$gtype
       )
     }
@@ -256,8 +256,6 @@ var UIDialog = GObject.registerClass(
         this._timeoutId = null;
       }
       _modalDialog = null;
-
-      Main.layoutManager.removeChrome(this);
     }
 
     vfunc_key_press_event(event) {

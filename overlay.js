@@ -55,14 +55,14 @@ var UIOverlay = GObject.registerClass(
         })
       );
 
-      this.overlayUIGroup = new St.Widget({
+      this._overlayUIGroup = new St.Widget({
         layout_manager: new Clutter.BinLayout()
       });
-      Main.layoutManager.addTopChrome(this.overlayUIGroup);
+      Main.layoutManager.addTopChrome(this._overlayUIGroup);
 
-      this.overlayUIGroup.add_child(this._stageOverlay);
+      this._overlayUIGroup.add_child(this._stageOverlay);
 
-      this.overlayUIGroup.add_child(this);
+      this._overlayUIGroup.add_child(this);
 
       this._grabHelper = new GrabHelper.GrabHelper(this, {
         actionMode: Shell.ActionMode.POPUP
@@ -85,7 +85,7 @@ var UIOverlay = GObject.registerClass(
 
       this._monitorBins = [];
       this._rebuildMonitorBins();
-      this.monitorChangeID = Main.layoutManager.connect(
+      this._monitorChangeID = Main.layoutManager.connect(
         'monitors-changed',
         () => {
           this._close();
@@ -104,11 +104,12 @@ var UIOverlay = GObject.registerClass(
 
     _onDestroy() {
       Main.sessionMode.disconnect(this.sessionUpdateID);
-      Main.layoutManager.disconnect(this.monitorChangeID);
+      Main.layoutManager.disconnect(this._monitorChangeID);
       if (this._timeoutId) {
         GLib.Source.remove(this._timeoutId);
         this._timeoutId = null;
       }
+      Main.layoutManager.removeChrome(this._overlayUIGroup);
     }
 
     _sessionUpdated() {

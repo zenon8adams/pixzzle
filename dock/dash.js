@@ -27,17 +27,15 @@ const St = imports.gi.St;
 const Me = imports.misc.extensionUtils.getCurrentExtension();
 const AppDisplay = Me.imports.dock.appDisplay;
 const UIApp = Me.imports.dock.apps;
-//const Dash = imports.ui.dash;
-const DND = imports.ui.dnd;
 const IconGrid = imports.ui.iconGrid;
 const Main = imports.ui.main;
-const Util = imports.misc.util;
 const Workspace = imports.ui.workspace;
 
 const Docking = Me.imports.dock.docking;
 const Utils = Me.imports.dock.utils;
 const AppIcons = Me.imports.dock.appIcons;
 const Dash = Me.imports.dock.dash_base;
+const CommUi = Me.imports.common;
 const lg = Utils.lg;
 
 const DASH_ANIMATION_TIME = Dash.DASH_ANIMATION_TIME;
@@ -48,10 +46,10 @@ const DASH_MAX_ICON_SIZE = 36;
 
 var DockDashItemContainer = GObject.registerClass(
   class DockDashItemContainer extends Dash.DashItemContainer {
-    _init(app) {
+    _init() {
       super._init();
-      this.app = app;
     }
+
     showLabel() {
       return AppIcons.itemShowLabel.call(this);
     }
@@ -104,6 +102,7 @@ var DockDash = GObject.registerClass(
       this._resetHoverTimeoutId = 0;
       this._labelShowing = false;
 
+      lg('[DockDash::_init]');
       super._init({
         name: 'dash',
         offscreen_redirect: Clutter.OffscreenRedirect.ALWAYS,
@@ -137,17 +136,13 @@ var DockDash = GObject.registerClass(
         Clutter.get_default_text_direction() == Clutter.TextDirection.RTL;
       this._box = new St.BoxLayout({
         name: 'dashtodockScrollBox',
-        vertical: !this._isHorizontal,
+        vertical: true,
         clip_to_allocation: false,
-        ...(!this._isHorizontal
-          ? { layout_manager: new DockDashIconsVerticalLayout() }
-          : {}),
+        layout_manager: new DockDashIconsVerticalLayout(),
         x_align: rtl ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
-        y_align: this._isHorizontal
-          ? this._alignment
-          : Clutter.ActorAlign.START,
-        y_expand: !this._isHorizontal,
-        x_expand: this._isHorizontal
+        y_align: Clutter.ActorAlign.START,
+        y_expand: true,
+        x_expand: false
       });
       this._box._delegate = this;
       this._dashContainer.add_actor(this._scrollView);
@@ -172,6 +167,7 @@ var DockDash = GObject.registerClass(
         })
       );
       this._background.add_child(sizerBox);
+      this._disableAppsOnLoad = false;
 
       this.add_child(this._background);
       this.add_child(this._dashContainer);
@@ -179,30 +175,29 @@ var DockDash = GObject.registerClass(
       this.connect('destroy', this._onDestroy.bind(this));
     }
 
-    playAnimation() {
-      this._box
+    _getApps() {
+      return this._box
         .get_children()
-        .forEach(
-          (child) =>
-            child.app.get_id() &&
-            child.app.animatable() &&
-            child.app.icon.play()
-        );
+        .filter((child) => child.child.app && child.child.app.get_id())
+        .map((child) => child.child.app);
+    }
+
+    playAnimation() {
+      lg(
+        '[DockDash::playAnimation] matches:',
+        this._getApps().filter((app) => app.animatable()).length
+      );
+      this._getApps().forEach((app) => app.animatable() && app.icon?.play());
     }
 
     pauseAnimation() {
-      this._box
-        .get_children()
-        .forEach(
-          (child) =>
-            child.app.get_id() &&
-            child.app.animatable() &&
-            child.app.icon.stop()
-        );
+      this._getApps().forEach(
+        (app) => app.get_id() && app.animatable() && app.icon?.stop()
+      );
     }
 
     _hide() {
-        this._controller._hide();
+      this._controller._hide();
     }
 
     vfunc_get_preferred_height(forWidth) {
@@ -240,6 +235,8 @@ var DockDash = GObject.registerClass(
     _onDestroy() {
       if (this._requiresVisibilityTimeout)
         GLib.source_remove(this._requiresVisibilityTimeout);
+      this.pauseAnimation();
+      this._docker = null;
     }
 
     _hookUpLabel() {
@@ -254,52 +251,21 @@ var DockDash = GObject.registerClass(
       // reset timeout to avid conflicts with the mousehover event
       this._ensureItemVisibility(null);
 
-      // Skip to avoid double events mouse
-      // TODO: Horizontal events are emulated, potentially due to a conflict
-      // with the workspace switching gesture.
-      if (!this._isHorizontal && event.is_pointer_emulated()) {
-        return Clutter.EVENT_STOP;
-      }
-
-      let adjustment,
+      let adjustment = this._scrollView.get_vscroll_bar().get_adjustment(),
         delta = 0;
-
-      if (this._isHorizontal)
-        adjustment = this._scrollView.get_hscroll_bar().get_adjustment();
-      else adjustment = this._scrollView.get_vscroll_bar().get_adjustment();
-
       let increment = adjustment.step_increment;
 
-      if (this._isHorizontal) {
-        switch (event.get_scroll_direction()) {
-          case Clutter.ScrollDirection.LEFT:
-            delta = -increment;
-            break;
-          case Clutter.ScrollDirection.RIGHT:
-            delta = +increment;
-            break;
-          case Clutter.ScrollDirection.SMOOTH: {
-            let [dx, dy] = event.get_scroll_delta();
-            // TODO: Handle y
-            //delta = dy * increment;
-            // Also consider horizontal component, for instance touchpad
-            delta = dx * increment;
-            break;
-          }
-        }
-      } else {
-        switch (event.get_scroll_direction()) {
-          case Clutter.ScrollDirection.UP:
-            delta = -increment;
-            break;
-          case Clutter.ScrollDirection.DOWN:
-            delta = +increment;
-            break;
-          case Clutter.ScrollDirection.SMOOTH: {
-            let [, dy] = event.get_scroll_delta();
-            delta = dy * increment;
-            break;
-          }
+      switch (event.get_scroll_direction()) {
+        case Clutter.ScrollDirection.UP:
+          delta = -increment;
+          break;
+        case Clutter.ScrollDirection.DOWN:
+          delta = +increment;
+          break;
+        case Clutter.ScrollDirection.SMOOTH: {
+          let [, dy] = event.get_scroll_delta();
+          delta = dy * increment;
+          break;
         }
       }
 
@@ -325,7 +291,7 @@ var DockDash = GObject.registerClass(
           100,
           () => {
             actor.disconnect(destroyId);
-            ensureActorVisibleInScrollView(this._scrollView, actor);
+            CommUi.ensureActorVisibleInScrollView(this._scrollView, actor);
             this._ensureActorVisibilityTimeoutId = 0;
             return GLib.SOURCE_REMOVE;
           }
@@ -339,7 +305,7 @@ var DockDash = GObject.registerClass(
     _createAppItem(app) {
       const appIcon = new AppIcons.makeAppIcon(app);
 
-      const item = new DockDashItemContainer(app);
+      const item = new DockDashItemContainer();
       item.setChild(appIcon);
 
       appIcon.connect('notify::hover', (a) => this._ensureItemVisibility(a));
@@ -351,6 +317,20 @@ var DockDash = GObject.registerClass(
       this._hookUpLabel(item, appIcon);
 
       return item;
+    }
+
+    _rewireApp(app, props) {
+      lg('[DockDash::_rewireApp] props:', Object.entries(props));
+      const item = this._box
+        .get_children()
+        .find((child) => child.child.app.get_id() === app.get_id());
+      lg('[DockDash::_rewireApp] item:', item);
+      if (item == null) {
+        return;
+      }
+      item.child._replaceApp(this._linkAppToSignal(app.clone(props)));
+      item.child.icon.setIconSize(this.iconSize);
+      app.destroy();
     }
 
     _requireVisibility() {
@@ -377,25 +357,58 @@ var DockDash = GObject.registerClass(
     }
 
     _redisplay() {
+      lg('[DockDash::_redisplay] disabled on load:', this._disableAppsOnLoad);
       const current = this._box
         .get_children()
-        .map((child) => child.app.get_id());
-      lg('[DockDash::_redisplay] current:', current);
-      const apps = UIApp.getApps().filter(
-        (app) => !current.includes(app.get_id())
+        .filter((child) => child.child.app.get_id());
+      const currentIds = current.map((child) => child.child.app.get_id());
+      const apps = UIApp.getApps({ disabled: this._disableAppsOnLoad }).filter(
+        (app) => !currentIds.includes(app.get_id())
       );
       apps.forEach((app) => {
-        lg('[DockDash::_redisplay] app:', app);
-        app.connect('clicked', (_, ev) => {
-          this._docker._onKeyPress(ev);
-          app.hide_on_trigger() && this._hide();
-        });
+        this._linkAppToSignal(app);
         const item = this._createAppItem(app);
         this._box.add_child(item);
         item.show(true);
       });
 
       this._adjustIconSize();
+      this._disableAppsOnLoad = false;
+    }
+
+    _linkAppToSignal(app) {
+      app.connect('refresh', (_, props) => this._rewireApp(app, props));
+      app.connect('clicked', (_, { event }) => {
+        if (event) {
+          this._docker?._onKeyPress(event);
+        } else {
+          app.get_simulation().activate();
+        }
+        app.hide_on_trigger() && this._hide();
+      });
+      return app;
+    }
+
+    _setAppsDisabledOnLoad() {
+      this._disableAppsOnLoad = true;
+    }
+
+    _disableApps(appsId) {
+      lg('[UIApp::_disableApps]');
+      const apps = this._filterAppsByIds(appsId);
+      apps.forEach((app) => app.can_disable() && (app.disabled = true));
+    }
+
+    _enableApps(appsId) {
+      lg('[UIApp::_enableApps]');
+      const apps = this._filterAppsByIds(appsId);
+      apps.forEach((app) => app.can_disable() && (app.disabled = false));
+    }
+
+    _filterAppsByIds(appsId) {
+      return appsId == null
+        ? this._getApps()
+        : this._getApps().filter((app) => appsId.include(app.get_id()));
     }
 
     _adjustIconSize() {
@@ -496,7 +509,6 @@ var DockDash = GObject.registerClass(
         item.destroy();
       }
 
-      // to avoid ugly animations, just suppress them like when dash is first loaded.
       this._shownInitially = false;
       this._redisplay();
     }
@@ -519,60 +531,3 @@ var DockDash = GObject.registerClass(
     }
   }
 );
-
-function ensureActorVisibleInScrollView(scrollView, actor) {
-  const { adjustment: vAdjustment } = scrollView.vscroll;
-  const { adjustment: hAdjustment } = scrollView.hscroll;
-  const { value: vValue0, pageSize: vPageSize, upper: vUpper } = vAdjustment;
-  const { value: hValue0, pageSize: hPageSize, upper: hUpper } = hAdjustment;
-  let [hValue, vValue] = [hValue0, vValue0];
-  let vOffset = 0;
-  let hOffset = 0;
-  let fade = scrollView.get_effect('fade');
-  if (fade) {
-    vOffset = fade.fade_margins.top;
-    hOffset = fade.fade_margins.left;
-  }
-
-  let box = actor.get_allocation_box();
-  let y1 = box.y1,
-    y2 = box.y2,
-    x1 = box.x1,
-    x2 = box.x2;
-
-  let parent = actor.get_parent();
-  while (parent != scrollView) {
-    if (!parent) throw new Error('Actor not in scroll view');
-
-    let box = parent.get_allocation_box();
-    y1 += box.y1;
-    y2 += box.y1;
-    x1 += box.x1;
-    x2 += box.x1;
-    parent = parent.get_parent();
-  }
-
-  if (y1 < vValue + vOffset) vValue = Math.max(0, y1 - vOffset);
-  else if (vValue < vUpper - vPageSize && y2 > vValue + vPageSize - vOffset)
-    vValue = Math.min(vUpper - vPageSize, y2 + vOffset - vPageSize);
-
-  if (x1 < hValue + hOffset) hValue = Math.max(0, x1 - hOffset);
-  else if (hValue < hUpper - hPageSize && x2 > hValue + hPageSize - hOffset)
-    hValue = Math.min(hUpper - hPageSize, x2 + hOffset - hPageSize);
-
-  if (vValue !== vValue0) {
-    vAdjustment.ease(vValue, {
-      mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-      duration: Util.SCROLL_TIME
-    });
-  }
-
-  if (hValue !== hValue0) {
-    hAdjustment.ease(hValue, {
-      mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-      duration: Util.SCROLL_TIME
-    });
-  }
-
-  return [hValue - hValue0, vValue - vValue0];
-}

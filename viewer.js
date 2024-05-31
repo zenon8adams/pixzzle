@@ -50,7 +50,7 @@ const {
   fmt,
   Constants
 } = Me.imports.utils;
-const { storeScreenshot } = Me.imports.common;
+const { storeScreenshot, ensureActorVisibleInScrollView } = Me.imports.common;
 const Shutter = Me.imports.screenshot;
 const Overlay = Me.imports.overlay;
 const { computePanelPosition } = Me.imports.panel;
@@ -62,6 +62,7 @@ const { UITooltip } = Me.imports.tooltip;
 const { UIImageRenderer } = Me.imports.renderer;
 const Dialog = Me.imports.dialog;
 const Docking = Me.imports.dock.docking;
+const DockUtil = Me.imports.dock.utils;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
@@ -76,12 +77,6 @@ const MODAL_CHECK_INTERVAL = 300;
  */
 const TINY_IMAGE = 'tINy';
 
-let SETTING_DISABLE_TILE_MODE;
-
-const ViewMode = Object.freeze({
-  ADAPTIVE: Symbol('adaptive'),
-  TILE: Symbol('tile')
-});
 var UIMainViewer = GObject.registerClass(
   {
     Signals: { 'drag-started': {}, 'drag-ended': {} }
@@ -108,12 +103,13 @@ var UIMainViewer = GObject.registerClass(
       this._lastY = 0;
 
       this._isActive = false;
-      this._viewMode = ViewMode.ADAPTIVE;
-      this._tilingDisabled = false;
       this._emptyView = true;
       this._isFlattened = new GBoolean(true);
 
       Main.layoutManager.addChrome(this);
+      DockUtil.registerAppOwner(DockUtil.AppsID.TAKE_SCREENSHOT, {
+        activate: this._showScreenshotView.bind(this)
+      });
 
       this._overlay = new Overlay.UIOverlay(this);
 
@@ -125,13 +121,20 @@ var UIMainViewer = GObject.registerClass(
        * FIXME: Disable watch when the modal is visible
        * and re-enable once the modal is hidden.
        */
-      const watcher = getActionWatcher(this).addWatch(MODAL_CHECK_INTERVAL, {
+      this._watcher = getActionWatcher().addWatch(MODAL_CHECK_INTERVAL, {
         reaction: this._close.bind(this, true /* instantly */),
         compare: (one, other) => one === other,
         action: () => Main.modalCount * !this._overlay.visible
       });
 
       this.reset();
+
+      this._box = new St.Widget({
+        name: 'UIMainViewerLayout',
+        x_expand: true,
+        y_expand: true
+      });
+      this.add_child(this._box);
 
       this._closeButton = new UIButton({
         style_class: 'pixzzle-ui-close-button',
@@ -180,48 +183,62 @@ var UIMainViewer = GObject.registerClass(
       this._closeButton.connect('enter-event', this._stopDrag.bind(this));
       this.add_child(this._closeButton);
 
-      this._topMostContainer = new UILayout({
-        name: 'UIMainViewerLayout',
-        vertical: true,
-        x_expand: true,
-        y_expand: true
-      });
-      this.add_child(this._topMostContainer);
-
-      this._splitViewXContainer = new UILayout({
-        name: 'UISplitViewLayout',
-        vertical: false,
-        x_expand: true,
-        reactive: true
-      });
-      this._topMostContainer.add_child(this._splitViewXContainer);
-
-      this._swapViewContainer = new UILayout({
-        name: 'UISwapViewContainer',
-        vertical: true,
-        x_expand: false,
-        reactive: true
-      });
-
-      this._bigViewContainer = new UILayout({
-        name: 'UIBigViewLayout',
-        x_expand: true,
-        y_expand: false,
-        x_align: Clutter.ActorAlign.CENTER,
-        y_align: Clutter.ActorAlign.CENTER
-      });
-
       this._buttonBox = new UILayout({
         name: 'UIButtonBox',
+        x: 0,
+        y: 0,
         vertical: false,
         x_expand: true,
+        y_expand: false,
         x_align: Clutter.ActorAlign.END
       });
-      this._topMostContainer.add_child(this._buttonBox);
+      this._box.add_child(this._buttonBox);
+      this._buttonBox.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this._box,
+          align_axis: Clutter.AlignAxis.Y_AXIS,
+          pivot_point: new Graphene.Point({ x: -1, y: 1 }),
+          factor: 1.0
+        })
+      );
+      this._buttonBox.add_constraint(
+        new Clutter.BindConstraint({
+          source: this._box,
+          coordinate: Clutter.BindCoordinate.WIDTH,
+          offset: 0
+        })
+      );
 
+      this._swapView = new UILayout({
+        name: 'UISwapView',
+        vertical: true,
+        y_expand: true,
+        reactive: true,
+        y_align: Clutter.ActorAlign.FILL
+      });
+      this._swapView.set_clip_to_allocation(true);
+      this._box.add_child(this._swapView);
+      this._swapView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._box,
+          from_edge: Clutter.SnapEdge.TOP,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
+      this._swapView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._buttonBox,
+          from_edge: Clutter.SnapEdge.BOTTOM,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
       this._settingsButton = new UIButton({
         style_class: 'pixzzle-ui-settings-button',
-        child: new St.Icon({ icon_name: 'org.gnome.Settings-symbolic' }),
+        child: new St.Icon({
+          icon_name: 'org.gnome.Settings-symbolic'
+        }),
         x_expand: false,
         reactive: true,
         x_align: Clutter.ActorAlign.CENTER,
@@ -240,10 +257,6 @@ var UIMainViewer = GObject.registerClass(
         text: _('Open settings'),
         style_class: 'pixzzle-ui-tooltip',
         visible: false
-      });
-      this.connect('destroy', () => {
-        Main.uiGroup.remove_actor(this._settingsButtonTooltip);
-        this._settingsButtonTooltip.destroy();
       });
       Main.uiGroup.add_child(this._settingsButtonTooltip);
 
@@ -286,10 +299,6 @@ var UIMainViewer = GObject.registerClass(
         style_class: 'pixzzle-ui-tooltip',
         visible: false
       });
-      this.connect('destroy', () => {
-        Main.uiGroup.remove_actor(this._swapButtonTooltip);
-        this._swapButtonTooltip.destroy();
-      });
 
       Main.uiGroup.add_child(this._swapButtonTooltip);
       this._buttonBox.add_child(this._thumbnailControls);
@@ -318,34 +327,56 @@ var UIMainViewer = GObject.registerClass(
         name: 'UIThumbnailViewer',
         sibling: this._folderView,
         x_expand: false,
+        y_expand: true,
         visible: true
       });
 
-      this._imageViewer = new UIImageRenderer(this);
-      this._dock = new Docking.DockedDash({ docker: this._imageViewer });
+      this._imageView = new UIImageRenderer(this);
+      this._box.add_child(this._imageView);
+      this._imageView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._box,
+          from_edge: Clutter.SnapEdge.TOP,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
+      this._imageView.add_constraint(
+        new Clutter.SnapConstraint({
+          source: this._buttonBox,
+          from_edge: Clutter.SnapEdge.BOTTOM,
+          to_edge: Clutter.SnapEdge.TOP,
+          offset: -this.border_width
+        })
+      );
+      this._dock = new Docking.DockedDash({
+        height: 0.9 * this.height,
+        docker: this._imageView
+      });
+      this._dock.connect('notify::width', () => this._updateDockPosition());
       this._thumbnailView.connect('replace', (_, shot) => {
-        this._imageViewer._replace(shot);
+        this._imageView._replace(shot);
+        this._folderView._setFocusOn(shot.name);
         this._emptyView = this._thumbnailView._shotCount() == 0;
         if (this._emptyView) {
           this._swapButton.checked = true;
-          this._imageViewer.abortSnipSession();
+          this._imageView.abortSnipSession();
+        } else {
+          this._dock._enableApps();
         }
       });
       this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
       this._thumbnailView.connect('notify::loaded', () => {
-        if (!this._skipFirst) {
-          this._skipFirst = true;
-          return;
-        }
-
         lg('[UIMainViewer::_init::_thumbnailView::notify::loaded]');
+        this._emptyView = this._thumbnailView._shotCount() == 0;
+        if (this._emptyView) {
+          this._dock.dash._setAppsDisabledOnLoad();
+        }
         this._toggleSwap(this._swapButton);
       });
 
-      this._splitViewXContainer.add_child(this._bigViewContainer);
-      this._splitViewXContainer.add_child(this._swapViewContainer);
-      this._swapViewContainer.add_child(this._thumbnailView);
-      this._swapViewContainer.add_child(this._folderView);
+      this._swapView.add_child(this._thumbnailView);
+      this._swapView.add_child(this._folderView);
 
       {
         const iconPath = 'icons/pixzzle-ui-collapse-symbolic.png';
@@ -377,11 +408,8 @@ var UIMainViewer = GObject.registerClass(
         this._animateFlatten(me.get_value());
       });
 
-      this._imageViewer.connect('lock-axis', (_, axis) => {
-        if (this._viewMode !== ViewMode.ADAPTIVE) {
-          return;
-        }
-
+      this._imageView.connect('lock-axis', (_, axis) => {
+        lg('[UIMainViewer::_init::_imageView::lock-axis]');
         let xGap = axis.X_AXIS;
         let yGap = axis.Y_AXIS;
         /*
@@ -423,7 +451,7 @@ var UIMainViewer = GObject.registerClass(
 
         this._updateDockPosition();
       });
-      this._imageViewer.connect('clean-slate', () => {
+      this._imageView.connect('clean-slate', () => {
         this._maxXSwing = INITIAL_WIDTH;
         this._maxYSwing = INITIAL_HEIGHT;
         const xOffset = this.width - INITIAL_WIDTH;
@@ -431,120 +459,55 @@ var UIMainViewer = GObject.registerClass(
         if (xOffset > 0) this._startX += xOffset;
         if (yOffset > 0) this._startY += yOffset;
 
-        this._viewMode = ViewMode.ADAPTIVE;
         this._updateSize();
+        this._updateDockPosition();
         this._emptyView = true;
+        this._dock._disableApps();
+        lg('[UIMainViewer::_init::_imageView::clean-slate] clean');
       });
-      this._imageViewer.connect('enter-event', this._stopDrag.bind(this));
-      this._imageViewer.connect('switch-active', (me, detail) => {
+      this._imageView.connect('enter-event', this._stopDrag.bind(this));
+      this._imageView.connect('switch-active', (me, detail) => {
         lg('[UIMainViewer::_init::_imageViewer::switch-active]');
         this._thumbnailView._switchActive(detail);
       });
-      this._imageViewer.connect('new-shot', (me, shot) => {
-        this._folderView.addNewShot({ name: shot }).catch(logError);
+      this._imageView.connect('new-shot', (me, shot) => {
+        this._folderView
+          .addNewShot({ name: shot })
+          .then(() => this._dock._show())
+          .catch(logError);
       });
-      this._imageViewer.connect('drag-action', () => {
+      this._imageView.connect('drag-action', () => {
         this._dock._hide();
       });
-      this._bigViewContainer.add_child(this._imageViewer);
-
-      this._snapIndicator = new St.Widget({
-        style_class: 'pixzzle-ui-snap-indicator',
-        visible: true,
-        y_expand: true,
-        x_expand: true
-      });
-      Main.layoutManager.addChrome(this._snapIndicator);
-
-      this._loadSettings();
       this.add_child(this._dock);
 
       this.connect('notify::mapped', () => {
-        if (!this._dock.dash) {
-          this._dock.mount();
-          this._updateDockPosition();
-        }
-
-        if (!this.visible) {
-          this._thumbnailView.cancelSubscriptions();
-          return;
-        }
         this._animateSettings();
-
         // Run only once for the lifetime of the
         // application
         if (!this._viewInitialized) {
           this._folderView.flatten();
+          this._updateDockPosition();
+
           this._viewInitialized = true;
-        } else {
-          this._thumbnailView.activateSubscriptions();
         }
       });
 
+      this._loadSettings();
       this.connect('destroy', this._onDestroy.bind(this));
       this._reload_theme();
     }
 
     _updateDockPosition() {
-      const [w, h] = this._computeBigViewSize();
-      this._dock._resetPosition({
-        x: this.border_width,
-        y: this.border_width,
-        width: w,
-        height: h
-      });
-    }
-
-    _updateSnapIndicator(x, y, w, h) {
-      if (!this._adaptiveGeometry || this._viewMode === ViewMode.ADAPTIVE) {
-        this._adaptiveGeometry = [
-          this._startX,
-          this._startY,
-          this._lastX,
-          this._lastY
-        ];
-      }
-
-      if (x === 0 && y === 0 && w === 0 && h === 0) {
-        this._snapIndicator.hide();
-      } else {
-        this._snapIndicator.set_position(x, y);
-        this._snapIndicator.set_size(w, h);
-        this._snapIndicator.show();
-      }
-    }
-
-    _updateSizeFromIndicator() {
-      if (this._tilingDisabled) {
-        return;
-      }
-      let updateView = false;
-      if (this._snapIndicator.visible) {
-        this._startX = this._snapIndicator.x;
-        this._lastX = this._snapIndicator.x + this._snapIndicator.width - 1;
-        this._startY = this._snapIndicator.y;
-        this._lastY = this._snapIndicator.y + this._snapIndicator.height - 1;
-        this._viewMode = ViewMode.TILE;
-        updateView = true;
-      } else if (
-        this._adaptiveGeometry &&
-        this._viewMode === ViewMode.TILE &&
-        this._startX > EDGE_THRESHOLD &&
-        this._startY > EDGE_THRESHOLD &&
-        this._activeMonitor.width - this._lastX > EDGE_THRESHOLD
-      ) {
-        [this._startX, this._startY, this._lastX, this._lastY] =
-          this._adaptiveGeometry;
-        this._viewMode = ViewMode.ADAPTIVE;
-        this._adaptiveGeometry = null;
-        updateView = true;
-      }
-
-      if (updateView) {
-        this._updateSize();
-        this._imageViewer._redraw(0, 0);
-      }
-      this._snapIndicator.hide();
+      const side = this._dock._slider.swipe;
+      const swipeLeft = side === St.Side.RIGHT;
+      const border = this.border_width;
+      const shotHeight = this._screenshotButton.height;
+      const imageViewHeight = this.height - border * 3 - shotHeight;
+      const x = border + this._swapView.width + 20;
+      const y = border + Math.floor(imageViewHeight - this._dock.height) / 2;
+      const swOff = swipeLeft ? this.width : x * 2 + this._dock.width + 20;
+      this._dock.set_position(swOff - x, y);
     }
 
     get border_width() {
@@ -556,28 +519,19 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _openSnipToolkit() {
-      this._imageViewer._openSnipToolkit();
+      this._imageView._openSnipToolkit();
     }
 
     _computeBigViewSize() {
-      const width =
-        this.width -
-        this.border_width * 2 -
-        this._thumbnailView.width -
-        this._splitViewXContainer.spacing;
-      /*
-       * FIXME: For the height, the BoxLayout `SplitViewXContainer`
-       * forces the this.border-bottom off. I'll use this workaround
-       * of multiplying border-width by 2 to account for the
-       * pushed off bottom border, till I find a fix.
-       */
-      const height =
-        this.height -
-        this.border_width * 2 -
-        this._splitViewXContainer.spacing -
-        this._topMostContainer.bottom_padding -
-        this._topMostContainer.spacing;
-
+      const border = this.border_width;
+      const width = this.width - this._swapView.width - border * 2 - 20;
+      const height = this.height - border * 2 - border - this._buttonBox.height;
+      lg(
+        '[UIMainViewer::_computeBigViewSize] width:',
+        width,
+        'height:',
+        height
+      );
       return [width, height];
     }
 
@@ -703,25 +657,14 @@ var UIMainViewer = GObject.registerClass(
     }
 
     _toggleSwap(widget) {
-      const correction = this._heightDiff ? this._heightDiff : 0;
-      const extent = this._swapViewContainer.height - correction;
-      lg('[UIMainViewer::_init::_swapButton::notify::checked]', extent);
       this._animateSwap();
       // folder hidden
       if (widget.checked) {
-        this._crossSlideAnimate(
-          this._folderView,
-          this._thumbnailView,
-          extent,
-          correction
-        );
+        // Bring the active folder view into focus
+        this._crossSlideAnimate(this._folderView, this._thumbnailView, 
+         () => this._folderView._setFocusOnCurrentFolder());
       } else {
-        this._crossSlideAnimate(
-          this._thumbnailView,
-          this._folderView,
-          extent,
-          correction
-        );
+        this._crossSlideAnimate(this._thumbnailView, this._folderView);
       }
 
       if (!this._meltButton.visible) {
@@ -743,7 +686,7 @@ var UIMainViewer = GObject.registerClass(
       }
     }
 
-    _crossSlideAnimate(one, other, extent, correction) {
+    _crossSlideAnimate(one, other, cb) {
       /*
        * Changing the height of an actor also
        * changes its minimum height. If we intend
@@ -757,24 +700,17 @@ var UIMainViewer = GObject.registerClass(
        * at.
        */
       one.visible = true;
-      one.height = 0;
       one.ease({
-        height: extent,
+        height: other.height,
         duration: 300,
         mode: Clutter.AnimationMode.EASE_IN_OUT,
-        onComplete: () => {
-          one.min_height = 0;
-        }
+        onComplete: () => cb?.()
       });
-      other.height -= correction;
       other.ease({
         height: 0,
         duration: 300,
-        mode: Clutter.AnimationMode.EASE_IN_OUT,
-        onComplete: () => {
-          other.visible = false;
-          other.min_height = 0;
-        }
+        mode: Clutter.AnimationMode.EASE_IN,
+        onComplete: () => (other.visible = false)
       });
     }
 
@@ -826,7 +762,7 @@ var UIMainViewer = GObject.registerClass(
     _loadSettings() {
       this._settings = inflateSettings();
       this._shortcutsBindingIds = [];
-      this._settingsChangedId = this._settings.connect(
+      this._settingsWatchId = this._settings.connect(
         'changed',
         this._onSettingsChange.bind(this)
       );
@@ -838,6 +774,94 @@ var UIMainViewer = GObject.registerClass(
       this._updateSettings();
       this._bindShortcuts();
       lg('[UIMainViewer::_onSettingsChange]');
+    }
+
+    _bindConstraints(dir) {
+      if (this._bindDir === dir) {
+        return;
+      }
+
+      const ViewDir = {
+        LTR: 0,
+        RTL: 1
+      };
+      const sideParam = {
+        [ViewDir.LTR]: {
+          imageView: {
+            1: {
+              from_edge: Clutter.SnapEdge.LEFT,
+              to_edge: Clutter.SnapEdge.LEFT
+            },
+            2: {
+              from_edge: Clutter.SnapEdge.RIGHT,
+              to_edge: Clutter.SnapEdge.LEFT,
+              offset: -20
+            }
+          },
+          swapView: {
+            factor: 1.0
+          }
+        },
+        [ViewDir.RTL]: {
+          imageView: {
+            1: {
+              from_edge: Clutter.SnapEdge.RIGHT,
+              to_edge: Clutter.SnapEdge.RIGHT
+            },
+            2: {
+              from_edge: Clutter.SnapEdge.LEFT,
+              to_edge: Clutter.SnapEdge.RIGHT,
+              offset: 20
+            }
+          },
+          swapView: {
+            factor: 0.0
+          }
+        }
+      };
+      const side = ['left', 'right'];
+      const swipe = [St.Side.RIGHT, St.Side.LEFT];
+      const thisSide = side[dir];
+      const otherSide = side[(dir + 1) % 2];
+      const constraints = sideParam[dir];
+      lg('[UIMainViewer::_bindConstraints] constraint:', dir);
+      this._imageView.remove_constraint_by_name(
+        `image-view-snap-${otherSide}-1`
+      );
+      this._imageView.remove_constraint_by_name(
+        `image-view-snap-${otherSide}-2`
+      );
+      this._imageView.add_constraint_with_name(
+        `image-view-snap-${thisSide}-1`,
+        new Clutter.SnapConstraint({
+          source: this._box,
+          ...constraints.imageView[1],
+          offset: -this.border_width
+        })
+      );
+      this._imageView.add_constraint_with_name(
+        `image-view-snap-${thisSide}-2`,
+        new Clutter.SnapConstraint({
+          source: this._swapView,
+          ...constraints.imageView[2]
+        })
+      );
+      this._swapView.remove_constraint_by_name(`swap-view-align-${otherSide}`);
+      this._swapView.add_constraint_with_name(
+        `swap-view-align-${thisSide}`,
+        new Clutter.AlignConstraint({
+          source: this._box,
+          align_axis: Clutter.AlignAxis.X_AXIS,
+          ...constraints.swapView
+        })
+      );
+      this._dock._slider.swipe = swipe[dir];
+      this._updateDockPosition();
+
+      /*
+       * Don't bind to the same direction twice.
+       */
+      this._bindDir = dir;
     }
 
     _updateSettings() {
@@ -864,22 +888,8 @@ var UIMainViewer = GObject.registerClass(
       setFGColor(this._screenshotButton, screenshotButtonFGColor);
 
       const viewIndex = this._settings.get_int(Prefs.Fields.SWAP_VIEWS);
-      const views = [this._bigViewContainer.name, this._thumbnailView.name];
-      const firstChild = this._splitViewXContainer.get_first_child();
-      const firstChildIndex = views.findIndex((v) => v == firstChild.name);
-      if (firstChildIndex !== viewIndex) {
-        this._splitViewXContainer.set_child_above_sibling(
-          ...this._splitViewXContainer.get_children()
-        );
-      }
-
+      this._bindConstraints(viewIndex);
       this._moveFloatingButton(viewIndex);
-
-      this._tilingDisabled = this._settings.get_boolean(
-        Prefs.Fields.DISABLE_TILE_MODE
-      );
-
-      this._bindSettings();
 
       function getColorSetting(id, settings) {
         let colors = settings.get_strv(id);
@@ -921,12 +931,6 @@ var UIMainViewer = GObject.registerClass(
 
         return unique;
       }
-    }
-
-    _bindSettings() {
-      SETTING_DISABLE_TILE_MODE = this._settings.get_boolean(
-        Prefs.Fields.DISABLE_TILE_MODE
-      );
     }
 
     _bindShortcuts() {
@@ -994,10 +998,10 @@ var UIMainViewer = GObject.registerClass(
           onComplete: this.hide.bind(this)
         });
       }
-      this._snapIndicator.hide();
     }
 
     _onDestroy() {
+      this._close(true);
       if (this._shutter) {
         this._shutter.disconnect(this._shutterClosingHandler);
         this._shutter.disconnect(this._shutterNewShotHandler);
@@ -1005,15 +1009,21 @@ var UIMainViewer = GObject.registerClass(
         this._shutter = null;
       }
 
-      if (this._dock) {
-        this._dock.destroy();
-        this._dock = null;
-      }
-
-      //this._modal = null;
-      Main.layoutManager.removeChrome(this._snapIndicator);
-      Main.layoutManager.removeChrome(this);
+      this._watcher?.destroy();
+      this._dock.destroy();
+      this._settings.disconnect(this._settingsWatchId);
       this._unbindShortcuts();
+      Main.uiGroup.remove_actor(this._settingsButtonTooltip);
+      Main.uiGroup.remove_actor(this._swapButtonTooltip);
+      this._settingsButtonTooltip.destroy();
+      this._swapButtonTooltip.destroy();
+
+      Main.layoutManager.removeChrome(this);
+
+      this._dock = null;
+      this._watcher = null;
+      this._settings = null;
+      this._settingsWatchId = null;
     }
 
     _showUI() {
@@ -1118,13 +1128,15 @@ var UIMainViewer = GObject.registerClass(
       return [leftX, topY, rightX - leftX + 1, bottomY - topY + 1];
     }
 
-    _updateSize() {
-      this._heightDiff = this.height;
+    _updatePosition() {
+      const [x, y, ,] = this._getGeometry();
+      this.set_position(x, y);
+    }
 
+    _updateSize() {
+      lg('[UIMainViewer::_updateSize]');
       const [x, y, w, h] = this._getGeometry();
       this._setRect(x, y, w, h);
-
-      this._heightDiff -= this.height;
     }
 
     _setRect(x, y, w, h) {
@@ -1234,7 +1246,6 @@ var UIMainViewer = GObject.registerClass(
 
       const [x, y] = [event.x, event.y];
       this._updateCursor(x, y);
-      this._updateSizeFromIndicator();
 
       return Clutter.EVENT_STOP;
     }
@@ -1357,13 +1368,12 @@ var UIMainViewer = GObject.registerClass(
       }
 
       if (cursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
-        const isTileMode = this._viewMode === ViewMode.TILE;
         const [x, y, w, h] = this._getGeometry();
         const [minWidth, minHeight, maxWidth, maxHeight] = [
           INITIAL_WIDTH,
           INITIAL_HEIGHT,
-          isTileMode ? monitorWidth : this._maxXSwing ?? this.width,
-          isTileMode ? monitorHeight : this._maxYSwing ?? this.height
+          this._maxXSwing ?? this.width,
+          this._maxYSwing ?? this.height
         ];
 
         if (w < minWidth) {
@@ -1404,53 +1414,16 @@ var UIMainViewer = GObject.registerClass(
             dy += overshootY;
           }
         }
-      } else if (
-        cursor === Meta.Cursor.MOVE_OR_RESIZE_WINDOW &&
-        !this._emptyView &&
-        !this._tilingDisabled
-      ) {
-        const leftTorque = monitorWidth / 2 - x;
-        const rightTorque = x - monitorWidth / 2;
-        const isEquallyLikely =
-          this._lastX <= monitorWidth - Panel.Right.width &&
-          monitorWidth - this._lastX <= EDGE_THRESHOLD + Panel.Right.width;
-        if (
-          this._startX >= Panel.Left.width &&
-          this._startX <= EDGE_THRESHOLD + Panel.Left.width &&
-          ((isEquallyLikely && leftTorque > rightTorque) || !isEquallyLikely)
-        ) {
-          this._updateSnapIndicator(
-            0 + Panel.Left.width,
-            0 + Panel.Top.height,
-            monitorWidth / 2 - Panel.Left.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else if (isEquallyLikely) {
-          this._updateSnapIndicator(
-            monitorWidth / 2,
-            0 + Panel.Top.height,
-            monitorWidth / 2 - Panel.Right.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else if (
-          this._startY >= Panel.Top.height &&
-          this._startY <= EDGE_THRESHOLD + Panel.Top.height
-        ) {
-          this._updateSnapIndicator(
-            0 + Panel.Left.width,
-            0 + Panel.Top.height,
-            monitorWidth - Panel.Left.width - Panel.Right.width,
-            monitorHeight - Panel.Top.height - Panel.Bottom.height
-          );
-        } else {
-          this._updateSnapIndicator(0, 0, 0, 0);
-        }
       }
 
-      this._updateSize();
-      this._updateDockPosition();
+      if (isMove) {
+        this._updatePosition();
+      } else {
+        this._updateSize();
+        this._updateDockPosition();
+      }
       if (this._dragCursor !== Meta.Cursor.MOVE_OR_RESIZE_WINDOW) {
-        this._imageViewer._redraw(dx, dy);
+        this._imageView._redraw(dx, dy);
       }
 
       this._dragX += dx;
@@ -1472,7 +1445,7 @@ var UIMainViewer = GObject.registerClass(
         }
         return Clutter.EVENT_STOP;
       }
-      this._imageViewer._onKeyPress(event);
+      this._imageView._onKeyPress(event);
 
       return super.vfunc_key_press_event(event);
     }
@@ -1503,35 +1476,16 @@ var UIMainViewer = GObject.registerClass(
       return this._onMotion(event, null);
     }
 
-    /*vfunc_touch_event(event) {
-    const eventType = event.type;
-    if (eventType === Clutter.EventType.TOUCH_BEGIN)
-      return this._onPress(event, 'touch', event.get_event_sequence());
-    else if (eventType === Clutter.EventType.TOUCH_END)
-      return this._onRelease(event, 'touch', event.get_event_sequence());
-    else if (eventType === Clutter.EventType.TOUCH_UPDATE)
-      return this._onMotion(event, event.get_event_sequence());
-
-    return Clutter.EVENT_PROPAGATE;
-   } */
-
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
-      global.stage.set_key_focus(null);
-      this._updateSizeFromIndicator();
-      if (this._dragButton) {
-        return this._onMotion(event, null);
-      } else {
-        this._dragButton = 0;
-        global.display.set_cursor(Meta.Cursor.DEFAULT);
-      }
-
+      global.display.set_cursor(Meta.Cursor.DEFAULT);
+      global.stage.set_key_focus(global.stage);
       return super.vfunc_leave_event(event);
     }
 
     vfunc_enter_event(event) {
       lg('[UIMainViewer::vfunc_enter_event]');
-      this.grab_key_focus();
+      global.stage.set_key_focus(this);
       return super.vfunc_enter_event(event);
     }
   }
@@ -1552,6 +1506,7 @@ const UISideViewBase = GObject.registerClass(
       });
       this.add_child(this._scrollView);
       this._scrollView.set_overlay_scrollbars(false);
+      this._scrollView.connect('scroll-event', this._onScrollEvent.bind(this));
 
       this._viewBox = new St.Viewport({
         layout_manager: new Clutter.BoxLayout({
@@ -1562,6 +1517,62 @@ const UISideViewBase = GObject.registerClass(
         y_expand: true
       });
       this._scrollView.add_actor(this._viewBox);
+    }
+
+    _onScrollEvent(actor, event) {
+      this._ensureItemVisibility(null);
+
+      let adjustment,
+        delta = 0;
+      adjustment = this._scrollView.get_vscroll_bar().get_adjustment();
+
+      let increment = adjustment.step_increment;
+
+      switch (event.get_scroll_direction()) {
+        case Clutter.ScrollDirection.UP:
+          delta = -increment;
+          break;
+        case Clutter.ScrollDirection.DOWN:
+          delta = +increment;
+          break;
+        case Clutter.ScrollDirection.SMOOTH: {
+          let [, dy] = event.get_scroll_delta();
+          delta = dy * increment;
+          break;
+        }
+      }
+
+      const value = adjustment.get_value();
+
+      // TODO: Remove this if possible.
+      if (Number.isNaN(value)) {
+        adjustment.set_value(delta);
+      } else {
+        adjustment.set_value(value + delta);
+      }
+
+      return Clutter.EVENT_STOP;
+    }
+
+    _ensureItemVisibility(actor) {
+      if (actor?.hover) {
+        const destroyId = actor.connect('destroy', () =>
+          this._ensureItemVisibility(null)
+        );
+        this._ensureActorVisibilityTimeoutId = GLib.timeout_add(
+          GLib.PRIORITY_DEFAULT,
+          100,
+          () => {
+            actor.disconnect(destroyId);
+            ensureActorVisibleInScrollView(this._scrollView, actor);
+            this._ensureActorVisibilityTimeoutId = 0;
+            return GLib.SOURCE_REMOVE;
+          }
+        );
+      } else if (this._ensureActorVisibilityTimeoutId) {
+        GLib.source_remove(this._ensureActorVisibilityTimeoutId);
+        this._ensureActorVisibilityTimeoutId = 0;
+      }
     }
   }
 );
@@ -1613,17 +1624,10 @@ const UIFolderViewer = GObject.registerClass(
           ...params
         });
       });
-      /*
-      shot.connect('delete', (widget) => {
-        this._removeShot(widget).then((filename) => {
-          const nextShot = this._viewBox.get_child_at_index(0);
-          this.emit('replace', {
-            name: nextShot?._filename ?? null,
-            widget: widget
-          });
-          GLib.unlink(filename);
-        });
-      }); */
+      folder._trigger.connect('notify::hover', (item) => {
+        this._ensureItemVisibility(item);
+        this._setFocusOnFolder(folder);
+      });
       if (prepend) {
         this._viewBox.insert_child_at_index(folder, 0);
       } else {
@@ -1637,6 +1641,7 @@ const UIFolderViewer = GObject.registerClass(
     }
 
     async latestShot() {
+      lg('[UIFolderViewer::latestShot]');
       if (!this._shotGroups) {
         await this._loadShots();
       }
@@ -1646,6 +1651,8 @@ const UIFolderViewer = GObject.registerClass(
         return { shots: this._shotGroups[today], date: today };
       }
 
+      lg('[UIFolderViewer::latestShot] shot dates:', this._shotsDate);
+      this._clearEmptyGroups();
       const date = this._shotsDate[0];
       if (this._shotGroups[date]) {
         return { shots: this._shotGroups[date], date };
@@ -1684,6 +1691,18 @@ const UIFolderViewer = GObject.registerClass(
       }
     }
 
+    _clearEmptyGroups() {
+      for (let i = 0; i < this._shotsDate.length; ) {
+        const date = this._shotsDate[i];
+        if (!this._shotGroups[date]) {
+          delete this._shotGroups[date];
+          this._shotsDate.splice(i, 1);
+        } else {
+          ++i;
+        }
+      }
+    }
+
     removeShot(date, shot) {
       lg(
         '[UIFolderViewer::removeShot]',
@@ -1717,6 +1736,41 @@ const UIFolderViewer = GObject.registerClass(
           return [idx, d];
         }
       }
+    }
+
+    _setFocusOn(shotName) {
+      const folder = this._findFolderForShot(shotName);
+      if (folder != null) {
+        ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+        this._setFocusOnFolder(folder);
+      }
+    }
+
+    _setFocusOnFolder(folder) {
+      if (folder == null) {
+        const firstDate = this._shotsDate[0];
+        firstDate && this._setFocusOnFolder(this._folders[firstDate]);
+        return;
+      }
+      const allFolders = Object.values(this._folders);
+      allFolders
+        .filter((folder) => !folder.get_effect('focus-effect'))
+        .forEach((folder) => folder._addFocusEffect());
+      folder._removeFocusEffect();
+    }
+
+    _setFocusOnCurrentFolder() {
+      const allFolders = Object.values(this._folders);
+      const folder = allFolders.find(
+        (folder) => !folder.get_effect('focus-effect')
+      );
+      this._setFocusOnFolder(folder);
+      ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+    }
+
+    _findFolderForShot(name) {
+      const folders = Object.values(this._folders);
+      return folders.find((folder) => folder._shots.indexOf(name) !== -1);
     }
 
     async _loadShots() {
@@ -1847,7 +1901,12 @@ const UIFolder = GObject.registerClass(
   },
   class UIFolder extends St.Widget {
     _init(name, shots, gradient, params) {
-      super._init({ ...params, layout_manager: new Clutter.BinLayout() });
+      super._init({
+        name,
+        ...params,
+        reactive: true,
+        layout_manager: new Clutter.BinLayout()
+      });
 
       this._shots = shots;
       this._label = new St.Label({
@@ -1881,6 +1940,357 @@ const UIFolder = GObject.registerClass(
           ''
         );
       }
+    }
+
+    _addFocusEffect() {
+      const focusEffect = new Shell.BlurEffect({
+        brightness: Constants.FULLY_OPAQUE,
+        mode: Shell.BlurMode.ACTOR,
+        sigma: 5
+      });
+      this.add_effect_with_name('focus-effect', focusEffect);
+    }
+
+    _removeFocusEffect() {
+      this.remove_effect_by_name('focus-effect');
+    }
+  }
+);
+
+const UIThumbnailViewer = GObject.registerClass(
+  {
+    GTypeName: 'UIThumbnailViewer',
+    Signals: { replace: { param_types: [Object.prototype] } },
+    Properties: {
+      loaded: GObject.ParamSpec.boolean(
+        'loaded',
+        'loaded',
+        'loaded',
+        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
+        false,
+        true,
+        false
+      ),
+      sibling: GObject.ParamSpec.object(
+        'sibling',
+        'sibling',
+        'sibling',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        UIFolderViewer.$gtype
+      )
+    }
+  },
+  class UIThumbnailViewer extends UISideViewBase {
+    _init(params) {
+      super._init(params);
+    }
+
+    _initialize(payload, onComplete) {
+      if (!this._initialized) {
+        this._loadShots(payload)
+          .then((shots) => {
+            this.emit('replace', shots[0] ?? {});
+            onComplete?.();
+            this._initialized = true;
+            this.notify('loaded');
+          })
+          .catch((err) => logError(err, 'Unable to load previous state'));
+      }
+    }
+
+    reload(shots, cb) {
+      this._initialized = false;
+      this._initialize(shots, cb);
+    }
+
+    _addShot(newShot, prepend) {
+      const shot = new UIPreview(newShot, this.width);
+      shot.connect('activate', (widget) => {
+        this.emit('replace', { name: widget._filename, widget: shot });
+      });
+      shot.connect('delete', (widget, params) => {
+        const { permanently } = params;
+        if (permanently) {
+          this._confirmDelete(() => removeShot.bind(this)(permanently));
+        } else {
+          removeShot.bind(this)(permanently);
+        }
+      });
+      shot._trigger.connect('notify::hover', (item) => {
+        this._ensureItemVisibility(item);
+      });
+      if (prepend) {
+        this._viewBox.insert_child_at_index(shot, 0);
+      } else {
+        this._viewBox.add_child(shot);
+      }
+
+      function removeShot(permanently) {
+        this._removeShot(shot).then((filename) => {
+          const nextShot = this._viewBox.get_child_at_index(0);
+          lg(
+            '[UIThumbnailViewer::_addShot::removeShot] nextShot:',
+            nextShot?._filename
+          );
+          this.emit('replace', {
+            name: nextShot?._filename ?? null,
+            widget: nextShot
+          });
+          const name = GLib.path_get_basename(filename);
+          const thumbnail = GLib.build_filenamev([
+            getThumbnailsLocation().get_path(),
+            name
+          ]);
+
+          if (permanently) {
+            GLib.unlink(filename);
+            GLib.unlink(thumbnail);
+          }
+          this.sibling.removeShot(this._date, filename);
+
+          if (!nextShot) {
+            this.reload();
+          }
+        });
+      }
+
+      return { name: shot._filename, widget: shot };
+    }
+
+    _addNewShot(newShot) {
+      const shot = this._addShot(newShot.name, true /* prepend */);
+      this.emit('replace', { ...newShot, ...shot });
+    }
+
+    _confirmDelete(cb) {
+      Dialog.getDialog().display(
+        {
+          icon: {
+            icon_name: 'pixzzle-ui-warning-sprite.png',
+            animatable: true,
+            system_icon: false,
+            size: 36,
+            rate: 36
+          },
+          header: 'Warning',
+          prompt: 'Are you sure you want to delete picture permanently?',
+          tips:
+            '<b>Tip</b>: Press the <i><b>delete</b></i> key to temporarily ' +
+            'delete picture',
+          ok: 'Yes',
+          cancel: 'No'
+        },
+        (status) => {
+          if (status === Dialog.ModalReply.OKAY) {
+            cb();
+          }
+        }
+      );
+    }
+
+    _switchActive(detail) {
+      const { current: filename, direction } = detail;
+      if (filename === null) {
+        return;
+      }
+
+      const shots = this._viewBox.get_children();
+      let next = -1;
+      for (let i = 0; i < shots.length; ++i) {
+        const shot = shots[i];
+        if (filename === shot._filename) {
+          next = i + direction;
+          next = (next < 0 ? next + shots.length : next) % shots.length;
+          break;
+        }
+      }
+      if (next === -1) {
+        return;
+      }
+
+      shots[next].emit('activate');
+      ensureActorVisibleInScrollView(this._scrollView, shots[next]);
+    }
+
+    _shotCount() {
+      return this._viewBox.get_children().length;
+    }
+
+    async _removeShot(widget) {
+      return new Promise((resolve, reject) => {
+        widget.ease({
+          opacity: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => {
+            const file = widget._filename;
+            this._viewBox.remove_actor(widget);
+            /*
+             * Notify the viewBox that we have removed
+             * a child and redraw.
+             */
+            this._viewBox.queue_relayout();
+            resolve(file);
+          }
+        });
+      });
+    }
+
+    async _loadShots(payload) {
+      this._viewBox.destroy_all_children();
+      const bundle = payload ?? (await this.sibling.latestShot());
+      lg('[UIThumbnailViewer::_loadShots]', 'payload:', bundle.shots.length);
+      this._is_flat = bundle.is_flat;
+      this._date = bundle.date;
+      const shots = [];
+      for (const shot of bundle.shots) {
+        shots.push(this._addShot(shot));
+      }
+      const newShotProps = bundle.nid;
+      if (newShotProps) {
+        this.emit('replace', { ...newShotProps, ...shots[0] });
+      }
+
+      return shots;
+    }
+
+    get loading() {
+      return !this._initialized;
+    }
+  }
+);
+
+const UIPreview = GObject.registerClass(
+  {
+    GTypeName: 'UIPreview',
+    Signals: { activate: {}, delete: { param_types: [Object.prototype] } }
+  },
+  class UIPreview extends St.Widget {
+    _init(filename, span, params) {
+      super._init({ ...params, y_expand: false, reactive: true });
+
+      this._surface = new St.Widget({ x_expand: false, y_expand: false });
+      this.add_child(this._surface);
+
+      const [thumbnail, actualFile] = this._getThumbnail(filename);
+      let pixbuf;
+      if (!thumbnail) {
+        const baseBuf = GdkPixbuf.Pixbuf.new_from_file(filename);
+        if (span > baseBuf.get_width() || span > baseBuf.get_height()) {
+          const aspectRatio = baseBuf.get_width() / baseBuf.get_height();
+          const scaledHeight = Math.max((span * 1.0) / aspectRatio, span);
+          pixbuf = baseBuf
+            .scale_simple(span, scaledHeight, GdkPixbuf.InterpType.BILINEAR)
+            .new_subpixbuf(0, 0, span - 1, span - 1);
+          pixbuf.set_option(TINY_IMAGE, 'true');
+        } else {
+          pixbuf = baseBuf.new_subpixbuf(0, 0, span - 1, span - 1);
+        }
+
+        this._saveThumbnail(pixbuf, actualFile);
+      } else {
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(actualFile);
+      }
+      const isTiny = pixbuf.get_option(TINY_IMAGE) === 'true';
+
+      if (isTiny) {
+        /*
+         * If original image is smaller than thumbnail,
+         * scale and blur the thumbnail.
+         */
+        this._surface.add_effect(
+          new Shell.BlurEffect({
+            brightness: Constants.FULLY_OPAQUE,
+            mode: Shell.BlurMode.ACTOR,
+            sigma: 2.5
+          })
+        );
+      }
+
+      this._filename = filename;
+      this._image = Clutter.Image.new();
+      this._image.set_data(
+        pixbuf.get_pixels(),
+        pixbuf.get_has_alpha()
+          ? Cogl.PixelFormat.RGBA_8888
+          : Cogl.PixelFormat.RGB_888,
+        pixbuf.get_width(),
+        pixbuf.get_height(),
+        pixbuf.get_rowstride()
+      );
+      this._surface.set_content(this._image);
+      this._surface.set_size(span, span);
+
+      this._trigger = new St.Button();
+      this.add_child(this._trigger);
+
+      this._trigger.add_constraint(
+        new Clutter.BindConstraint({
+          source: this,
+          coordinate: Clutter.BindCoordinate.WIDTH
+        })
+      );
+      this._trigger.add_constraint(
+        new Clutter.BindConstraint({
+          source: this,
+          coordinate: Clutter.BindCoordinate.HEIGHT
+        })
+      );
+      this._trigger.connect('clicked', () => {
+        lg('[UIPreview::_init::_trigger::clicked]');
+        this.emit('activate');
+      });
+
+      this._removeButton = new St.Button({
+        style_class: 'pixzzle-ui-thumbnail-close-button',
+        child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
+        x: 0,
+        y: 0
+      });
+      this._removeButton.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this,
+          align_axis: Clutter.AlignAxis.X_AXIS,
+          pivot_point: new Graphene.Point({ x: 1, y: 0 }),
+          factor: 1
+        })
+      );
+      this._removeButton.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this,
+          align_axis: Clutter.AlignAxis.Y_AXIS,
+          pivot_point: new Graphene.Point({ x: 0, y: 0 }),
+          factor: 0
+        })
+      );
+      this.add_child(this._removeButton);
+
+      this._removeButton.connect('clicked', () => {
+        lg('[UIPreview::_init::_closeButton::clicked]');
+        this.emit('delete', {});
+      });
+    }
+
+    _getThumbnail(filename) {
+      const dir = getThumbnailsLocation();
+      const base = GLib.path_get_basename(filename);
+      const thumbnail = GLib.build_filenamev([dir.get_path(), base]);
+      if (GLib.file_test(thumbnail, GLib.FileTest.EXISTS)) {
+        return [true, thumbnail];
+      }
+
+      return [false, thumbnail];
+    }
+
+    _saveThumbnail(image, filename) {
+      const file = Gio.File.new_for_path(filename);
+      const stream = file.create(Gio.FileCreateFlags.NONE, null);
+      image.save_to_streamv_async(stream, 'png', [], [], null, (_, task) => {
+        if (!GdkPixbuf.Pixbuf.save_to_stream_finish(task)) {
+          return;
+        }
+        stream.close(null);
+      });
     }
   }
 );

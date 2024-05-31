@@ -35,8 +35,8 @@ let _actionWatcher = null;
 /**
  * @returns {ActionWatcher}
  */
-function getActionWatcher(deleter) {
-  if (_actionWatcher == null) _actionWatcher = new ActionWatcher(deleter);
+function getActionWatcher() {
+  if (_actionWatcher == null) _actionWatcher = new ActionWatcher();
 
   return _actionWatcher;
 }
@@ -69,25 +69,14 @@ class ActionWatch {
 }
 
 class ActionWatcher {
-  constructor(deleter) {
+  constructor() {
     this._idleMonitor = global.backend.get_core_idle_monitor();
-    this._idleMonitor.add_idle_watch(
+    this._idle_watch = this._idleMonitor.add_idle_watch(
       IDLE_TIME,
       this._onIdleMonitorBecameIdle.bind(this)
     );
     this._idle = this._idleMonitor.get_idletime() > IDLE_TIME;
     this._watches = [];
-    deleter.connect(
-      'destroy',
-      function () {
-        if (this._timeoutId) {
-          GLib.source_remove(this._timeoutId);
-          this._timeoutId = 0;
-        }
-        this._watches.forEach((watch) => watch.remove());
-        this._watches = [];
-      }.bind(this)
-    );
   }
 
   addWatch(interval, callbacks) {
@@ -96,7 +85,7 @@ class ActionWatcher {
     let watch = new ActionWatch(this, interval, callbacks);
     this._watches.push(watch);
     this._updateTimeout();
-    return watch;
+    return this;
   }
 
   _removeWatch(watch) {
@@ -109,6 +98,17 @@ class ActionWatcher {
     }
   }
 
+  destroy() {
+    if (this._timeoutId) {
+      GLib.source_remove(this._timeoutId);
+      this._timeoutId = 0;
+    }
+    this._idleMonitor.remove_watch(this._idle_watch);
+    this._idleMonitor.remove_watch(this._user_active_watch);
+    this._watches.forEach((watch) => watch.remove());
+    this._watches = [];
+  }
+
   _onIdleMonitorBecameActive() {
     this._idle = false;
     this._updateActions();
@@ -117,7 +117,7 @@ class ActionWatcher {
 
   _onIdleMonitorBecameIdle() {
     this._idle = true;
-    this._idleMonitor.add_user_active_watch(
+    this._user_active_watch = this._idleMonitor.add_user_active_watch(
       this._onIdleMonitorBecameActive.bind(this)
     );
     this._updateTimeout();

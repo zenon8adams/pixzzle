@@ -70,13 +70,6 @@
       </description>
       <range min="0" max="1"/>
     </key>
-    <key name="disable-tile-mode" type="b">
-      <default>true</default>
-      <summary>Prevent window from tiling</summary>
-      <description>    
-        Disable tiling of window on dragging to edge. 
-      </description>
-    </key>
     <key name="natural-panning" type="b">
       <default>true</default>
       <summary>Pan big view naturally</summary>
