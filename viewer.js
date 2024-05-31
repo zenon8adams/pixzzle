@@ -356,6 +356,7 @@ var UIMainViewer = GObject.registerClass(
       this._dock.connect('notify::width', () => this._updateDockPosition());
       this._thumbnailView.connect('replace', (_, shot) => {
         this._imageView._replace(shot);
+        this._folderView._setFocusOn(shot.name);
         this._emptyView = this._thumbnailView._shotCount() == 0;
         if (this._emptyView) {
           this._swapButton.checked = true;
@@ -468,7 +469,6 @@ var UIMainViewer = GObject.registerClass(
       this._imageView.connect('switch-active', (me, detail) => {
         lg('[UIMainViewer::_init::_imageViewer::switch-active]');
         this._thumbnailView._switchActive(detail);
-        this._folderView._setFocusOn(detail.current);
       });
       this._imageView.connect('new-shot', (me, shot) => {
         this._folderView
@@ -1736,8 +1736,10 @@ const UIFolderViewer = GObject.registerClass(
 
     _setFocusOn(shotName) {
       const folder = this._findFolderForShot(shotName);
-      ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
-      this._setFocusOnFolder(folder);
+      if (folder != null) {
+        ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+        this._setFocusOnFolder(folder);
+      }
     }
 
     _setFocusOnFolder(folder) {
@@ -1748,15 +1750,14 @@ const UIFolderViewer = GObject.registerClass(
       }
       const allFolders = Object.values(this._folders);
       allFolders
-        .filter((folder) => !folder.has_effects())
+        .filter((folder) => !folder.get_effect('focus-effect'))
         .forEach((folder) => folder._addFocusEffect());
       folder._removeFocusEffect();
     }
 
     _findFolderForShot(name) {
-      return Object.values(this._folders).find(
-        (folder) => folder._shots.indexOf(name) !== -1
-      );
+      const folders = Object.values(this._folders);
+      return folders.find((folder) => folder._shots.indexOf(name) !== -1);
     }
 
     async _loadShots() {
@@ -1976,7 +1977,6 @@ const UIThumbnailViewer = GObject.registerClass(
         this._loadShots(payload)
           .then((shots) => {
             this.emit('replace', shots[0] ?? {});
-            this.sibling._setFocusOnFolder(null);
             onComplete?.();
             this._initialized = true;
             this.notify('loaded');
