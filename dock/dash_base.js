@@ -231,6 +231,8 @@ var Dash = GObject.registerClass(
       super._init({
         name: 'dash'
       });
+
+      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _hookUpLabel(item, appIcon) {
@@ -297,6 +299,15 @@ var Dash = GObject.registerClass(
             '[gnome-shell] this._labelShowing'
           );
         }
+      }
+    }
+
+    _onDestroy() {
+      if (this._resetHoverTimeoutId) {
+        GLib.source_remove(this._resetHoverTimeoutId);
+      }
+      if (this._showLabelTimeoutId) {
+        GLib.source_remove(this._showLabelTimeoutId);
       }
     }
   }

@@ -43,7 +43,14 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation, format } = Me.imports.utils;
+const {
+  inflateSettings,
+  SCHEMA_NAME,
+  lg,
+  getShotsLocation,
+  getIconsLocation,
+  format
+} = Me.imports.utils;
 const { storeScreenshot } = Me.imports.common;
 const { UITooltip } = Me.imports.tooltip;
 
@@ -58,7 +65,9 @@ const IconLabelButton = GObject.registerClass(
       });
       this.set_child(this._container);
 
-      this._container.add_child(new St.Icon({ icon_name: iconName }));
+      this._container.add_child(
+        new St.Icon({ gicon: Gio.icon_new_for_string(iconName) })
+      );
       this._container.add_child(
         new St.Label({ text: label, x_align: Clutter.ActorAlign.CENTER })
       );
@@ -1044,7 +1053,7 @@ var UIShutter = GObject.registerClass(
       this._panel.add_child(this._typeButtonContainer);
 
       this._selectionButton = new IconLabelButton(
-        'screenshot-ui-area-symbolic',
+        `${getIconsLocation().get_path()}/screenshot-ui-area-symbolic.svg`,
         _('Selection'),
         {
           style_class: 'pixzzle-ui-type-button',
@@ -1067,7 +1076,7 @@ var UIShutter = GObject.registerClass(
       );
 
       this._screenButton = new IconLabelButton(
-        'screenshot-ui-display-symbolic',
+        `${getIconsLocation().get_path()}/screenshot-ui-display-symbolic.svg`,
         _('Screen'),
         {
           style_class: 'pixzzle-ui-type-button',
@@ -1115,22 +1124,24 @@ var UIShutter = GObject.registerClass(
       );
       this._bottomRowContainer.add_child(this._captureButton);
 
-      this._showPointerButtonContainer = new St.BoxLayout({
+      this._ocrActionBox = new St.BoxLayout({
         x_align: Clutter.ActorAlign.END,
         x_expand: true
       });
-      this._bottomRowContainer.add_child(this._showPointerButtonContainer);
+      this._bottomRowContainer.add_child(this._ocrActionBox);
 
-      const iconPath = 'icons/pixzzle-ui-ocr-action-symbolic.svg';
+      const iconName = 'pixzzle-ui-ocr-action-symbolic.svg';
       this._ocrActionButton = new St.Button({
         style_class: 'pixzzle-ui-ocr-action-button',
         child: new St.Icon({
-          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
+          gicon: Gio.icon_new_for_string(
+            `${getIconsLocation().get_path()}/${iconName}`
+          ),
           style_class: 'pixzzle-ui-ocr-action-icon'
         }),
         toggle_mode: true
       });
-      this._showPointerButtonContainer.add_child(this._ocrActionButton);
+      this._ocrActionBox.add_child(this._ocrActionButton);
 
       this.add_child(
         new UITooltip(this._ocrActionButton, {

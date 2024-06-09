@@ -32,7 +32,6 @@ const BoxPointer = imports.ui.boxpointer;
 const Dash = Me.imports.dock.dash_base;
 const IconGrid = imports.ui.iconGrid;
 const Main = imports.ui.main;
-const ParentalControlsManager = imports.misc.parentalControlsManager;
 const Util = imports.misc.util;
 const Workspace = imports.ui.workspace;
 
