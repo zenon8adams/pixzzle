@@ -154,7 +154,7 @@ var UIImageRenderer = GObject.registerClass(
         context.restore();
         cairo_set_source_pixbuf(
           context,
-          pixbuf,
+          this._visibleRegionPixbuf,
           (maxWidth - effectiveWidth) / 2,
           (maxHeight - effectiveHeight) / 2
         );
@@ -939,18 +939,14 @@ var UIImageRenderer = GObject.registerClass(
         event.flags,
         event.sequence
       );
+      this.grab_key_focus();
       this._updateCursor();
       return super.vfunc_enter_event(event);
     }
 
     vfunc_leave_event(event) {
       lg('[UIImageRenderer::vfunc_leave_event]');
-      if (this._dragButton) {
-        return this._onMotion(event, null);
-      } else {
-        global.display.set_cursor(Meta.Cursor.DEFAULT);
-      }
-
+      global.stage.set_key_focus(global.stage);
       return super.vfunc_leave_event(event);
     }
   }

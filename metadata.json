@@ -5,11 +5,7 @@
   "schema_name": "org.gnome.shell.extensions.pixzzle",
   "gettext-domain": "pixzzle",
   "shell-version": [
-    "42",
-    "41",
-    "40",
-    "3.38",
-    "3.36"
+    "42"
   ],
   "url": "https://github.com/zenon8adams/pixzzle",
   "version": "v1-alpha3"

@@ -1065,7 +1065,7 @@ var UIShutter = GObject.registerClass(
       this._panel.add_child(this._typeButtonContainer);
 
       this._selectionButton = new IconLabelButton(
-        'screenshot-ui-area-symbolic',
+        `${getIconsLocation().get_path()}/screenshot-ui-area-symbolic.svg`,
         _('Selection'),
         {
           style_class: 'pixzzle-ui-type-button',
@@ -1088,7 +1088,7 @@ var UIShutter = GObject.registerClass(
       );
 
       this._screenButton = new IconLabelButton(
-        'screenshot-ui-display-symbolic',
+        `${getIconsLocation().get_path()}/screenshot-ui-display-symbolic.svg`,
         _('Screen'),
         {
           style_class: 'pixzzle-ui-type-button',
@@ -1166,6 +1166,19 @@ var UIShutter = GObject.registerClass(
         })
       );
       this._ocrActionBox.add_child(this._expandButton);
+
+      const iconName = 'pixzzle-ui-ocr-action-symbolic.svg';
+      this._ocrActionButton = new St.Button({
+        style_class: 'pixzzle-ui-ocr-action-button',
+        child: new St.Icon({
+          gicon: Gio.icon_new_for_string(
+            `${getIconsLocation().get_path()}/${iconName}`
+          ),
+          style_class: 'pixzzle-ui-ocr-action-icon'
+        }),
+        toggle_mode: true
+      });
+      this._ocrActionBox.add_child(this._ocrActionButton);
 
       this._ocrActionButton = new IconLabelButton(
         `${getIconsLocation().get_path()}/pixzzle-ui-ocr-action-symbolic.png`,

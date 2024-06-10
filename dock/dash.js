@@ -98,8 +98,6 @@ var DockDash = GObject.registerClass(
       this._dragPlaceholder = null;
       this._dragPlaceholderPos = -1;
       this._animatingPlaceholdersCount = 0;
-      this._showLabelTimeoutId = 0;
-      this._resetHoverTimeoutId = 0;
       this._labelShowing = false;
 
       lg('[DockDash::_init]');
@@ -235,6 +233,9 @@ var DockDash = GObject.registerClass(
     _onDestroy() {
       if (this._requiresVisibilityTimeout)
         GLib.source_remove(this._requiresVisibilityTimeout);
+      if(this._ensureActorVisibilityTimeoutId) {
+          GLib.source_remove(this._ensureActorVisibilityTimeoutId);
+      }
       this.pauseAnimation();
       this._docker = null;
     }
@@ -283,9 +284,10 @@ var DockDash = GObject.registerClass(
 
     _ensureItemVisibility(actor) {
       if (actor?.hover) {
-        const destroyId = actor.connect('destroy', () =>
-          this._ensureItemVisibility(null)
-        );
+        const destroyId = actor.connect('destroy', () => {
+          this._ensureItemVisibility(null);
+          actor.disconnect(destroyId);
+        });
         this._ensureActorVisibilityTimeoutId = GLib.timeout_add(
           GLib.PRIORITY_DEFAULT,
           100,
