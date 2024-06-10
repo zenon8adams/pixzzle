@@ -94,19 +94,6 @@
   background-color: white;
 }
 
-.pixzzle-ui-capture-button:cast .pixzzle-ui-capture-button-circle {
-  background-color: #e56a54;
-}
-
-.pixzzle-ui-capture-button:cast:hover .pixzzle-ui-capture-button-circle,
-.pixzzle-ui-capture-button:cast:focus .pixzzle-ui-capture-button-circle {
-  background-color: #cd3a1f;
-}
-
-.pixzzle-ui-capture-button:cast:active .pixzzle-ui-capture-button-circle {
-  background-color: #8b2715;
-}
-
 .pixzzle-ui-expand-button {
   border-radius: 10px;
   padding: 6px 8px !important;
@@ -134,7 +121,7 @@
 .pixzzle-ui-expand-button:hover,
 .pixzzle-ui-expand-button:focus
 {
-  background-color: rgba(237, 237, 237, 0.15) !important;
+  background-color: rgba(237, 237, 237, 0.15);
 }
 
 .pixzzle-ui-ocr-action-button:checked:hover {
