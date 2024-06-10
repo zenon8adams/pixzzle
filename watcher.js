@@ -110,6 +110,7 @@ class ActionWatcher {
   }
 
   _onIdleMonitorBecameActive() {
+    lg('[ActionWatcher::_onIdleMonitorBecameActive]');
     this._idle = false;
     this._updateActions();
     this._updateTimeout();

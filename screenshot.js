@@ -43,7 +43,14 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Gettext = imports.gettext.domain(Me.metadata['gettext-domain']);
 const _ = Gettext.gettext;
 
-const { inflateSettings, SCHEMA_NAME, lg, getShotsLocation, format } = Me.imports.utils;
+const {
+  inflateSettings,
+  SCHEMA_NAME,
+  lg,
+  getShotsLocation,
+  getIconsLocation,
+  format
+} = Me.imports.utils;
 const { storeScreenshot } = Me.imports.common;
 const { UITooltip } = Me.imports.tooltip;
 
@@ -58,7 +65,9 @@ const IconLabelButton = GObject.registerClass(
       });
       this.set_child(this._container);
 
-      this._container.add_child(new St.Icon({ icon_name: iconName }));
+      this._container.add_child(
+        new St.Icon({ gicon: Gio.icon_new_for_string(iconName) })
+      );
       this._container.add_child(
         new St.Label({ text: label, x_align: Clutter.ActorAlign.CENTER })
       );
@@ -340,6 +349,19 @@ const UIAreaSelector = GObject.registerClass(
           this._lastX = monitor.x + Math.floor((monitor.width * 5) / 8) - 1;
           this._lastY = monitor.y + Math.floor((monitor.height * 5) / 8) - 1;
         }
+
+        this._updateSelectionRect();
+      }
+    }
+
+    expandHandles() {
+      if (Main.layoutManager.primaryIndex !== -1) {
+        const monitor =
+          Main.layoutManager.monitors[Main.layoutManager.primaryIndex];
+        this._startX = monitor.x;
+        this._startY = monitor.y;
+        this._lastX = monitor.x + monitor.width - 1;
+        this._lastY = monitor.y + monitor.height - 1;
 
         this._updateSelectionRect();
       }
@@ -1035,7 +1057,6 @@ var UIShutter = GObject.registerClass(
       });
 
       this._typeButtonContainer = new St.Widget({
-        style_class: 'pixzzle-ui-type-button-container',
         layout_manager: new Clutter.BoxLayout({
           spacing: 12,
           homogeneous: true
@@ -1115,23 +1136,48 @@ var UIShutter = GObject.registerClass(
       );
       this._bottomRowContainer.add_child(this._captureButton);
 
-      this._showPointerButtonContainer = new St.BoxLayout({
-        x_align: Clutter.ActorAlign.END,
-        x_expand: true
+      this._ocrActionBox = new St.Widget({
+        x_align: Clutter.ActorAlign.FILL,
+        x_expand: true,
+        layout_manager: new Clutter.BoxLayout({
+          spacing: 10,
+          homogeneous: true
+        })
       });
-      this._bottomRowContainer.add_child(this._showPointerButtonContainer);
+      this._bottomRowContainer.add_child(this._ocrActionBox);
 
-      const iconPath = 'icons/pixzzle-ui-ocr-action-symbolic.svg';
-      this._ocrActionButton = new St.Button({
-        style_class: 'pixzzle-ui-ocr-action-button',
-        child: new St.Icon({
-          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
-          style_class: 'pixzzle-ui-ocr-action-icon'
-        }),
-        toggle_mode: true
-      });
-      this._showPointerButtonContainer.add_child(this._ocrActionButton);
+      this._expandButton = new IconLabelButton(
+        `${getIconsLocation().get_path()}/screenshot-ui-expand-symbolic.png`,
+        _('Expand'),
+        {
+          style_class: 'pixzzle-ui-expand-button',
+          x_align: Clutter.ActorAlign.START,
+          x_expand: true
+        }
+      );
+      this._expandButton.connect('clicked', () =>
+        this._areaSelector.expandHandles()
+      );
+      this.add_child(
+        new UITooltip(this._expandButton, {
+          text: _('Expand drag edges'),
+          style_class: 'pixzzle-ui-tooltip',
+          visible: false
+        })
+      );
+      this._ocrActionBox.add_child(this._expandButton);
 
+      this._ocrActionButton = new IconLabelButton(
+        `${getIconsLocation().get_path()}/pixzzle-ui-ocr-action-symbolic.png`,
+        _('Extract'),
+        {
+          style_class: 'pixzzle-ui-ocr-action-button',
+          x_align: Clutter.ActorAlign.END,
+          x_expand: true,
+          toggle_mode: true
+        }
+      );
+      this._ocrActionBox.add_child(this._ocrActionButton);
       this.add_child(
         new UITooltip(this._ocrActionButton, {
           text: _('Perform OCR'),
