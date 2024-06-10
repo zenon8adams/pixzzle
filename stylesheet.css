@@ -21,7 +21,7 @@
   padding: 18px;
   padding-bottom: 12px;
   margin-bottom: 4em;
-  spacing: 12px;
+  spacing: 20px;
 }
 
 .pixzzle-ui-close-button {
@@ -94,33 +94,34 @@
   background-color: white;
 }
 
-.pixzzle-ui-capture-button:cast .pixzzle-ui-capture-button-circle {
-  background-color: #e56a54;
-}
-
-.pixzzle-ui-capture-button:cast:hover .pixzzle-ui-capture-button-circle,
-.pixzzle-ui-capture-button:cast:focus .pixzzle-ui-capture-button-circle {
-  background-color: #cd3a1f;
-}
-
-.pixzzle-ui-capture-button:cast:active .pixzzle-ui-capture-button-circle {
-  background-color: #8b2715;
+.pixzzle-ui-expand-button {
+  border-radius: 10px;
+  padding: 6px 8px !important;
+  color: #ededed !important;
+  background-color: transparent;
 }
 
 .pixzzle-ui-ocr-action-button {
-  border-radius: 99px;
-  padding: 12px !important;
+  border-radius: 10px;
+  padding: 6px 8px !important;
   color: #ededed !important;
 }
 
 .pixzzle-ui-ocr-action-button StIcon {
+  icon-size: 2em;
+}
+
+.pixzzle-ui-expand-button StIcon {
   icon-size: 1.8em;
 }
 
 .pixzzle-ui-ocr-action-button:hover,
 .pixzzle-ui-ocr-action-button:focus,
-.pixzzle-ui-ocr-action-button:checked {
-  background-color: rgba(237, 237, 237, 0.15) !important;
+.pixzzle-ui-ocr-action-button:checked,
+.pixzzle-ui-expand-button:hover,
+.pixzzle-ui-expand-button:focus
+{
+  background-color: rgba(237, 237, 237, 0.15);
 }
 
 .pixzzle-ui-ocr-action-button:checked:hover {

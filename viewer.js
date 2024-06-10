@@ -30,6 +30,12 @@ const {
   Soup,
   Pango
 } = imports.gi;
+/**
+ * Gdk cannot be imported into shell process, hence
+ * we import only what we need. We want to get the
+ * current cursor position.
+ */
+const Display = imports.gi.Gdk.Display;
 const Cairo = imports.cairo;
 const File = Gio.File;
 const Main = imports.ui.main;
@@ -44,6 +50,7 @@ const {
   inflateSettings,
   lg,
   getShotsLocation,
+  getIconsLocation,
   getThumbnailsLocation,
   getDate,
   filesDateSorter,
@@ -69,6 +76,7 @@ const INITIAL_HEIGHT = 600;
 const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const MODAL_CHECK_INTERVAL = 300;
+const OCCLUSION_THRESHOLD = 50;
 /*
  * Store metadata in image ancillary chunk
  * to detect if the image is smaller than
@@ -94,8 +102,10 @@ var UIMainViewer = GObject.registerClass(
         can_focus: true
       });
 
+      const seat = Clutter.get_default_backend().get_default_seat();
       this._dragButton = 0;
       this._dragSequence = null;
+      this._pointerDev = seat.get_pointer();
 
       this._startX = -1;
       this._startY = 0;
@@ -272,22 +282,23 @@ var UIMainViewer = GObject.registerClass(
         reactive: true,
         style_class: 'pixzzle-ui-screenshot-button'
       });
-      {
-        const iconPath = 'icons/pixzzle-ui-swap-symbolic.svg';
-        this._swapIcon = new St.Icon({
-          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
-          rotation_angle_z: 0
-        });
-        this._swapButton = new UIButton({
-          style_class: 'pixzzle-ui-swap-button',
-          child: this._swapIcon,
-          x_expand: false,
-          reactive: true,
-          x_align: Clutter.ActorAlign.CENTER,
-          toggle_mode: true
-        });
-        this._swapIcon.set_pivot_point(0.5, 0.5);
-      }
+      const swapIconName = 'pixzzle-ui-swap-symbolic.svg';
+      this._swapIcon = new St.Icon({
+        gicon: Gio.icon_new_for_string(
+          `${getIconsLocation().get_path()}/${swapIconName}`
+        ),
+        rotation_angle_z: 0
+      });
+      this._swapButton = new UIButton({
+        style_class: 'pixzzle-ui-swap-button',
+        child: this._swapIcon,
+        x_expand: false,
+        reactive: true,
+        x_align: Clutter.ActorAlign.CENTER,
+        toggle_mode: true
+      });
+      this._swapIcon.set_pivot_point(0.5, 0.5);
+
       this._swapButton.connect('notify::checked', (widget) => {
         if (!this._thumbnailView.loading) {
           this._toggleSwap(widget);
@@ -378,25 +389,25 @@ var UIMainViewer = GObject.registerClass(
       this._swapView.add_child(this._thumbnailView);
       this._swapView.add_child(this._folderView);
 
-      {
-        const iconPath = 'icons/pixzzle-ui-collapse-symbolic.png';
-        const collapseIcon = new St.Icon({
-          gicon: Gio.icon_new_for_string(`${Me.path}/assets/${iconPath}`),
-          rotation_angle_z: 0
-        });
-        this._meltButton = new UIButton({
-          style_class: 'pixzzle-ui-melt-button',
-          child: collapseIcon,
-          x_expand: false,
-          reactive: true,
-          x_align: Clutter.ActorAlign.CENTER,
-          visible: !this._isFlattened.get_value(),
-          pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
-          x: 0,
-          y: 0
-        });
-        this.add_child(this._meltButton);
-      }
+      const collapseIconName = 'pixzzle-ui-collapse-symbolic.png';
+      const collapseIcon = new St.Icon({
+        gicon: Gio.icon_new_for_string(
+          `${getIconsLocation().get_path()}/${collapseIconName}`
+        ),
+        rotation_angle_z: 0
+      });
+      this._meltButton = new UIButton({
+        style_class: 'pixzzle-ui-melt-button',
+        child: collapseIcon,
+        x_expand: false,
+        reactive: true,
+        x_align: Clutter.ActorAlign.CENTER,
+        visible: !this._isFlattened.get_value(),
+        pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+        x: 0,
+        y: 0
+      });
+      this.add_child(this._meltButton);
 
       this._meltButton.connect('clicked', () => {
         this._isFlattened.set_value(true);
@@ -661,8 +672,9 @@ var UIMainViewer = GObject.registerClass(
       // folder hidden
       if (widget.checked) {
         // Bring the active folder view into focus
-        this._crossSlideAnimate(this._folderView, this._thumbnailView, 
-         () => this._folderView._setFocusOnCurrentFolder());
+        this._crossSlideAnimate(this._folderView, this._thumbnailView, () =>
+          this._folderView._setFocusOnCurrentFolder()
+        );
       } else {
         this._crossSlideAnimate(this._thumbnailView, this._folderView);
       }
@@ -744,7 +756,45 @@ var UIMainViewer = GObject.registerClass(
         return;
       }
 
+      this._settingsId = global.window_manager.connect('map', () => {
+        lg('[UIMainViewer::_init::window_manager::map]');
+        if (!this._settingsWindow()) {
+          return;
+        }
+        this._adjustPreferencesWindow();
+        global.window_manager.disconnect(this._settingsId);
+      });
+
       ExtensionUtils.openPrefs();
+    }
+
+    _adjustPreferencesWindow() {
+      lg('[UIMainViewer::_adjustPreferencesWindow]');
+      const settingsWindow = this._settingsWindow();
+      const rect = settingsWindow.get_frame_rect();
+      if (isOccluded(rect, this)) {
+        lg('[UIMainViewer::_adjustPreferencesWindow] isOccluded');
+        const cX = (this._activeMonitor.width - rect.width) / 2;
+        const cY = (this._activeMonitor.height - rect.height) / 2;
+        settingsWindow.move_frame(1, cX, cY);
+        this.reset(true /* hard reset */);
+        this._imageView._reload();
+      }
+
+      function isOccluded(bottom, top) {
+        const x = Math.max(bottom.x, top.x);
+        const y = Math.max(bottom.y, top.y);
+        const width = Math.max(
+          0,
+          Math.min(bottom.x + bottom.width - 1, top.x + top.width - 1) - x
+        );
+        const height = Math.max(
+          0,
+          Math.min(bottom.y + bottom.height - 1, top.y + top.height - 1) - y
+        );
+
+        return width >= OCCLUSION_THRESHOLD && height >= OCCLUSION_THRESHOLD;
+      }
     }
 
     _settingsWindow() {
@@ -1019,7 +1069,9 @@ var UIMainViewer = GObject.registerClass(
       this._swapButtonTooltip.destroy();
 
       Main.layoutManager.removeChrome(this);
+      global.window_manager.disconnect(this._settingsId);
 
+      this._settingsId = null;
       this._dock = null;
       this._watcher = null;
       this._settings = null;
@@ -1078,7 +1130,7 @@ var UIMainViewer = GObject.registerClass(
       });
     }
 
-    reset() {
+    reset(hard = false) {
       this._stopDrag();
       global.display.set_cursor(Meta.Cursor.DEFAULT);
 
@@ -1088,6 +1140,7 @@ var UIMainViewer = GObject.registerClass(
       // Initially x < 0 will be true so that we can get
       // set the `_activeMonitor` property.
       if (
+        hard ||
         x < 0 ||
         y < 0 ||
         x + w > this?._activeMonitor?.width ||
@@ -1431,7 +1484,37 @@ var UIMainViewer = GObject.registerClass(
       return Clutter.EVENT_PROPAGATE;
     }
 
+    _shouldHaveFocus() {
+      if (this._pointerIsWithin()) {
+        return true;
+      }
+      global.stage.set_key_focus(global.stage);
+      return false;
+    }
+
+    _pointerIsWithin() {
+      const { x, y } = this.getMousePosition();
+      lg('[UIMainViewer::_pointerIsWithin] x:', x, 'y:', y);
+      return (
+        x >= this.x &&
+        x < this.x + this.width - 1 &&
+        y >= this.y &&
+        y < this.x + this.height - 1
+      );
+    }
+
+    getMousePosition() {
+      const display = Display.get_default();
+      const seat = display.get_default_seat();
+      const pointer = seat.get_pointer();
+      const [, x, y] = pointer.get_position();
+      return { x, y };
+    }
+
     vfunc_key_press_event(event) {
+      if (!this._shouldHaveFocus()) {
+        return;
+      }
       const symbol = event.keyval;
       lg('[UIMainViewer::vfunc_key_press_event]', 'symbol:', symbol);
       if (symbol === Clutter.KEY_Down) {
@@ -1479,13 +1562,14 @@ var UIMainViewer = GObject.registerClass(
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
       global.display.set_cursor(Meta.Cursor.DEFAULT);
-      global.stage.set_key_focus(global.stage);
       return super.vfunc_leave_event(event);
     }
 
     vfunc_enter_event(event) {
       lg('[UIMainViewer::vfunc_enter_event]');
-      global.stage.set_key_focus(this);
+      if (!this.has_key_focus()) {
+        global.stage.set_key_focus(this);
+      }
       return super.vfunc_enter_event(event);
     }
   }
@@ -1517,6 +1601,7 @@ const UISideViewBase = GObject.registerClass(
         y_expand: true
       });
       this._scrollView.add_actor(this._viewBox);
+      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _onScrollEvent(actor, event) {
@@ -1556,9 +1641,10 @@ const UISideViewBase = GObject.registerClass(
 
     _ensureItemVisibility(actor) {
       if (actor?.hover) {
-        const destroyId = actor.connect('destroy', () =>
-          this._ensureItemVisibility(null)
-        );
+        const destroyId = actor.connect('destroy', () => {
+          this._ensureItemVisibility(null);
+          actor.disconnect(destroyId);
+        });
         this._ensureActorVisibilityTimeoutId = GLib.timeout_add(
           GLib.PRIORITY_DEFAULT,
           100,
@@ -1572,6 +1658,12 @@ const UISideViewBase = GObject.registerClass(
       } else if (this._ensureActorVisibilityTimeoutId) {
         GLib.source_remove(this._ensureActorVisibilityTimeoutId);
         this._ensureActorVisibilityTimeoutId = 0;
+      }
+    }
+
+    _onDestroy() {
+      if (this._ensureActorVisibilityTimeoutId) {
+        GLib.source_remove(this._ensureActorVisibilityTimeoutId);
       }
     }
   }
@@ -1764,8 +1856,10 @@ const UIFolderViewer = GObject.registerClass(
       const folder = allFolders.find(
         (folder) => !folder.get_effect('focus-effect')
       );
-      this._setFocusOnFolder(folder);
-      ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+      if (folder) {
+        this._setFocusOnFolder(folder);
+        ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
+      }
     }
 
     _findFolderForShot(name) {

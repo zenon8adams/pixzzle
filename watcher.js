@@ -70,13 +70,29 @@ class ActionWatch {
 
 class ActionWatcher {
   constructor() {
-    this._idleMonitor = global.backend.get_core_idle_monitor();
-    this._idle_watch = this._idleMonitor.add_idle_watch(
-      IDLE_TIME,
-      this._onIdleMonitorBecameIdle.bind(this)
-    );
-    this._idle = this._idleMonitor.get_idletime() > IDLE_TIME;
+    const has_idle_monitor = global.backend.get_core_idle_monitor;
+    this._has_idle_monitor = has_idle_monitor;
+    if (this._has_idle_monitor) {
+      this._idleMonitor = global.backend.get_core_idle_monitor();
+      this._idle_watch = this._idleMonitor.add_idle_watch(
+        IDLE_TIME,
+        this._onIdleMonitorBecameIdle.bind(this)
+      );
+      this._idle = this._idleMonitor.get_idletime() > IDLE_TIME;
+    } else {
+      this._poll();
+    }
     this._watches = [];
+  }
+
+  _poll() {
+    this._watchId = GLib.timeout_add(GLib.PRIORITY_HIGH_IDLE, IDLE_TIME, () => {
+      this._onIdleMonitorBecameActive();
+      GLib.source_remove(this._watchId);
+      this._watchId = 0;
+      this._poll();
+      return GLib.SOURCE_REMOVE;
+    });
   }
 
   addWatch(interval, callbacks) {
@@ -103,13 +119,20 @@ class ActionWatcher {
       GLib.source_remove(this._timeoutId);
       this._timeoutId = 0;
     }
-    this._idleMonitor.remove_watch(this._idle_watch);
-    this._idleMonitor.remove_watch(this._user_active_watch);
-    this._watches.forEach((watch) => watch.remove());
+    if(this._watchId) {
+        GLib.source_remove(this._watchId);
+        this._watchId = 0;
+    }
+    if (this._has_idle_monitor) {
+      this._idleMonitor.remove_watch(this._idle_watch);
+      this._idleMonitor.remove_watch(this._user_active_watch);
+      this._watches.forEach((watch) => watch.remove());
+    }
     this._watches = [];
   }
 
   _onIdleMonitorBecameActive() {
+    lg('[ActionWatcher::_onIdleMonitorBecameActive]');
     this._idle = false;
     this._updateActions();
     this._updateTimeout();
