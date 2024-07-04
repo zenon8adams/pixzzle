@@ -468,6 +468,12 @@
   margin-left: 0;
 }
 
+.pixzzle-ui-zoom-fit {
+  margin-right: 2px;
+  margin-left: 2px;
+  stroke: #fff;
+}
+
 .zoom-disabled {
   color: rgba(0, 0, 0, 0.3);
 }

@@ -35,6 +35,7 @@ const Main = imports.ui.main;
 const MessageTray = imports.ui.messageTray;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
+const DockUtil = Me.imports.dock.utils;
 const Prefs = Me.imports.prefs;
 const { lg, Constants, inflateSettings, getIconsLocation } = Me.imports.utils;
 
@@ -945,6 +946,10 @@ var UIImageRenderer = GObject.registerClass(
           } else {
             this._copyTextToClipboard(this._ocrText.get_text(), 'Text copied');
           }
+        } else if (symbol === Clutter.KEY_plus) {
+          this._zoomToolBox._zoomFeedIn();
+        } else if (symbol === Clutter.KEY_minus) {
+          this._zoomToolBox._zoomFeedOut();
         }
       } else if (symbol === Clutter.KEY_Delete) {
         lg(
@@ -1036,6 +1041,8 @@ var UIImageRenderer = GObject.registerClass(
         this._processSnipCapture();
       }
 
+      this._zoomToolBox.fadeIn();
+
       const [x, y] = [event.x, event.y];
       global.display.set_cursor(Meta.Cursor.DEFAULT);
 
@@ -1067,8 +1074,8 @@ var UIImageRenderer = GObject.registerClass(
 
       const [maxWidth, maxHeight] = this._getBufferArea();
       if (!this._isInSnipSession) {
+        const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
         if (!this._isScaled()) {
-          const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
           if (maxWidth > this.width) {
             this._xpos += panDirection * dx;
             if (this._xpos < 0) {
@@ -1100,10 +1107,7 @@ var UIImageRenderer = GObject.registerClass(
           } else {
             dy = 0;
           }
-          this.emit('drag-action');
-          this._canvas.invalidate();
         } else {
-          const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
           const sf = this._getScale();
           const zoomWidth = this._pixbuf.get_width();
           const zoomHeight = this._pixbuf.get_height();
@@ -1141,9 +1145,10 @@ var UIImageRenderer = GObject.registerClass(
             dy = 0;
           }
           this._dragZoom = true;
-          this.emit('drag-action');
-          this._canvas.invalidate();
         }
+        this.emit('drag-action');
+        this._canvas.invalidate();
+        this._zoomToolBox.fadeOut();
       } else {
         this._updateSnipIndicator();
       }
@@ -1429,7 +1434,14 @@ const MAX_ZOOM_LEVEL = ZOOM_SCALES.length;
 const UIZoomTool = GObject.registerClass(
   class UIZoomTool extends St.Widget {
     _init(anchor) {
-      super._init({ name: 'UIZoomTool', x: 0, y: 0, reactive: true });
+      super._init({
+        name: 'UIZoomTool',
+        x: 0,
+        y: 0,
+        reactive: true,
+        visible: false,
+        opacity: 0
+      });
       this._anchor = anchor;
       this._zoomLevel = this._getDefault();
 
@@ -1457,7 +1469,7 @@ const UIZoomTool = GObject.registerClass(
         scale_y: 1,
         child: new St.Icon({
           gicon: Gio.icon_new_for_string(
-            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-in.png`
+            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-in.svg`
           )
         })
       });
@@ -1466,6 +1478,22 @@ const UIZoomTool = GObject.registerClass(
       this._zoomIn.connect('clicked', this._zoomFeedIn.bind(this));
       this._zoomBox.add_child(this._zoomIn);
 
+      this._zoomFit = new St.Button({
+        style_class: 'pixzzle-ui-zoom-fit',
+        pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+        scale_x: 1,
+        scale_y: 1,
+        child: new St.Icon({
+          gicon: Gio.icon_new_for_string(
+            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-fit.svg`
+          )
+        })
+      });
+      this._zoomFit.connect('enter-event', this._animateButton.bind(this));
+      this._zoomFit.connect('leave-event', this._animateButton.bind(this));
+      this._zoomFit.connect('clicked', this._zoomFeedDefault.bind(this));
+      this._zoomBox.add_child(this._zoomFit);
+
       this._zoomOut = new St.Button({
         style_class: 'pixzzle-ui-zoom-out',
         pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
@@ -1473,7 +1501,7 @@ const UIZoomTool = GObject.registerClass(
         scale_y: 1,
         child: new St.Icon({
           gicon: Gio.icon_new_for_string(
-            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-out.png`
+            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-out.svg`
           )
         })
       });
@@ -1507,6 +1535,9 @@ const UIZoomTool = GObject.registerClass(
       );
 
       this._updateZoomLabel();
+      DockUtil.registerAppOwner(DockUtil.AppsID.ZOOM, {
+        activate: this._toggleVisible.bind(this)
+      });
     }
 
     _zoomFeedOut(button) {
@@ -1517,8 +1548,7 @@ const UIZoomTool = GObject.registerClass(
 
       this._zoomOut.remove_style_class_name('zoom-disabled');
       this._zoomLevel -= ZOOM_STEP;
-      this._updateZoomLabel();
-      this._anchor._loadScaled();
+      this._updateZoom();
       lg('[UIZoomTool::_zoomFeedOut] zoomFactor:', this.zoomFactor);
     }
 
@@ -1530,9 +1560,22 @@ const UIZoomTool = GObject.registerClass(
 
       this._zoomIn.remove_style_class_name('zoom-disabled');
       this._zoomLevel += ZOOM_STEP;
+      this._updateZoom();
+      lg('[UIZoomTool::_zoomFeedOut] zoomFactor:', this.zoomFactor);
+    }
+
+    _zoomFeedDefault(button) {
+      if (this._zoomLevel === this._getDefault()) {
+        return;
+      }
+
+      this._zoomLevel = this._getDefault();
+      this._updateZoom();
+    }
+
+    _updateZoom() {
       this._updateZoomLabel();
       this._anchor._loadScaled();
-      lg('[UIZoomTool::_zoomFeedOut] zoomFactor:', this.zoomFactor);
     }
 
     get zoomFactor() {
@@ -1546,6 +1589,44 @@ const UIZoomTool = GObject.registerClass(
     resetZoom() {
       this._zoomLevel = this._getDefault();
       this._updateZoomLabel();
+    }
+
+    _toggleVisible() {
+      if (this.visible) {
+        this.ease({
+          opacity: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => this.hide()
+        });
+      } else {
+        this.show();
+        this.ease({
+          opacity: Constants.FULLY_OPAQUE,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD
+        });
+      }
+    }
+
+    fadeOut() {
+      this._fade(Math.floor(Constants.FULLY_OPAQUE / 2));
+    }
+
+    fadeIn() {
+      this._fade(Constants.FULLY_OPAQUE);
+    }
+
+    _fade(opacity) {
+      if (this.opacity === opacity) {
+        return;
+      }
+
+      this.ease({
+        opacity,
+        duration: 200,
+        mode: Clutter.AnimationMode.EASE_OUT_QUAD
+      });
     }
 
     _updateZoomLabel() {

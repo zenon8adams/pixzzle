@@ -66,10 +66,10 @@ const Prefs = Me.imports.prefs;
 const { getActionWatcher } = Me.imports.watcher;
 const { Timer } = Me.imports.timer;
 const { UITooltip } = Me.imports.tooltip;
-const { UIImageRenderer } = Me.imports.renderer;
 const Dialog = Me.imports.dialog;
 const Docking = Me.imports.dock.docking;
 const DockUtil = Me.imports.dock.utils;
+const { UIImageRenderer } = Me.imports.renderer;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;

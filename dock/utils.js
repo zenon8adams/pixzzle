@@ -39,7 +39,8 @@ var AppsID = {
   SNIP: 'snip',
   ROTATE_CLOCKWISE: 'rotate-clockwise',
   ROTATE_COUNTER_CLOCKWISE: 'rotate-counter-clockwise',
-  TAKE_SCREENSHOT: 'take-screenshot'
+  TAKE_SCREENSHOT: 'take-screenshot',
+  ZOOM: 'zoom'
 };
 
 var { SCHEMA_NAME, lg } = Me.imports.utils;
@@ -317,6 +318,18 @@ var AppsScaffold = {
     icon: _gfullPathOf('pixzzle-ui-new-shot-symbolic.png'),
     disabled_icon: _dfullPathOf('pixzzle-ui-new-shot-gray-symbolic.png'),
     can_disable: false,
+    animatable: false,
+    simulation: {
+      hideOnTrigger: false,
+      activate: null
+    }
+  },
+  [AppsID.ZOOM]: {
+    id: AppsID.ZOOM,
+    name: 'Launch Zoom',
+    icon: _gfullPathOf('pixzzle-ui-zoom-control.png'),
+    disabled_icon: _dfullPathOf('pixzzle-ui-zoom-control-gray.png'),
+    can_disable: true,
     animatable: false,
     simulation: {
       hideOnTrigger: false,
