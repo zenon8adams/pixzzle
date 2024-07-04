@@ -1134,7 +1134,6 @@ var UIShutter = GObject.registerClass(
         'clicked',
         this._onCaptureButtonClicked.bind(this)
       );
-      this._bottomRowContainer.add_child(this._captureButton);
 
       this._ocrActionBox = new St.Widget({
         x_align: Clutter.ActorAlign.FILL,
@@ -1145,6 +1144,7 @@ var UIShutter = GObject.registerClass(
         })
       });
       this._bottomRowContainer.add_child(this._ocrActionBox);
+      this._bottomRowContainer.add_child(this._captureButton);
 
       this._expandButton = new IconLabelButton(
         `${getIconsLocation().get_path()}/screenshot-ui-expand-symbolic.png`,

@@ -16,16 +16,28 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-const { Clutter, Cogl, Gio, GObject, GLib, Meta, St, GdkPixbuf, Soup, Pango } =
-  imports.gi;
+const {
+  Clutter,
+  Cogl,
+  Gio,
+  GObject,
+  GLib,
+  Meta,
+  St,
+  GdkPixbuf,
+  Soup,
+  Pango,
+  Graphene
+} = imports.gi;
 
 const Cairo = imports.cairo;
 const Main = imports.ui.main;
 const MessageTray = imports.ui.messageTray;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
+const DockUtil = Me.imports.dock.utils;
 const Prefs = Me.imports.prefs;
-const { lg, Constants, inflateSettings } = Me.imports.utils;
+const { lg, Constants, inflateSettings, getIconsLocation } = Me.imports.utils;
 
 const { storeScreenshot } = Me.imports.common;
 
@@ -69,7 +81,21 @@ var UIImageRenderer = GObject.registerClass(
       });
       this._xpos = 0;
       this._ypos = 0;
+      /**
+       * leftX, topY, zoomX, zoomY,
+       * zoomedWidth, zoomedHeight => Holds panning
+       * information during zoom operation.
+       */
+      this._leftX = 0;
+      this._topY = 0;
+      this._zoomX = 0;
+      this._zoomY = 0;
+      this._lastScale = -1;
+      this._zoomedWidth = 0;
+      this._zoomedHeight = 0;
       this._anchor = anchor;
+      // Are we panning on a zoomed image?
+      this._dragZoom = false;
 
       lg('[UIImageRenderer::_init]');
       this._canvas = new Clutter.Canvas();
@@ -90,6 +116,9 @@ var UIImageRenderer = GObject.registerClass(
       this._ocrText.clutter_text.set_editable(false);
       this._ocrText.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
       this._anchor.add_child(this._ocrText);
+
+      this._zoomToolBox = new UIZoomTool(this);
+      this.add_child(this._zoomToolBox);
 
       this._loadSettings();
 
@@ -120,12 +149,13 @@ var UIImageRenderer = GObject.registerClass(
     _draw(canvas, context) {
       lg('[UIImageRenderer::_draw] filename:', this._filename);
       if (this._pixbuf && this._filename) {
-        const [pixWidth, pixHeight] = [
-          this._pixbuf.get_width(),
-          this._pixbuf.get_height()
-        ];
-
+        const [pixWidth, pixHeight] = this._getBufferArea();
         const [maxWidth, maxHeight] = this._getMaxSize();
+        /*
+         * Calculate the actual size of the viewport taking
+         * into account, the size of the image and the panning
+         * actions that have been done previously.
+         */
         const [effectiveWidth, effectiveHeight] = [
           Math.min(pixWidth - this._xpos, maxWidth),
           Math.min(pixHeight - this._ypos, maxHeight)
@@ -134,9 +164,13 @@ var UIImageRenderer = GObject.registerClass(
           '[UIImageRenderer::_init::_draw] effectiveWidth:',
           effectiveWidth,
           'effectiveHeight:',
-          effectiveHeight
+          effectiveHeight,
+          'xpos:',
+          this._xpos,
+          'ypos:',
+          this._ypos
         );
-        const pixbuf = this._pixbuf.new_subpixbuf(
+        const pixbuf = this._pixbufAfterTransform(
           this._xpos,
           this._ypos,
           effectiveWidth,
@@ -155,8 +189,8 @@ var UIImageRenderer = GObject.registerClass(
         cairo_set_source_pixbuf(
           context,
           this._visibleRegionPixbuf,
-          (maxWidth - effectiveWidth) / 2,
-          (maxHeight - effectiveHeight) / 2
+          (maxWidth - pixbuf.get_width()) / 2,
+          (maxHeight - pixbuf.get_height()) / 2
         );
         context.paint();
 
@@ -200,6 +234,8 @@ var UIImageRenderer = GObject.registerClass(
         this._reOrient(-this._orientation, true /* flush */);
         this.emit('clean-slate');
         this._isPanningEnabled = false;
+        this._origPixbuf = null;
+        this._zoomToolBox.resetZoom();
       } else if (newFile !== this._filename) {
         /*
          * Since we support rotation, create
@@ -214,10 +250,102 @@ var UIImageRenderer = GObject.registerClass(
           this.abortSnipSession();
           this._reOrient(-this._orientation, true /* flush */);
           this._pixbuf = pixbuf;
+          this._origPixbuf = pixbuf;
           this._filename = newFile;
+          this._zoomToolBox.resetZoom();
           this._reload();
         }
       }
+    }
+
+    _pixbufAfterTransform(startX, startY, w, h) {
+      let pb = null;
+      const sf = this._getScale();
+      const [vw, vh] = this._getMaxSize();
+      const sc = 1 / sf;
+      const image = this._origPixbuf;
+      const iw = image.get_width();
+      const ih = image.get_height();
+      if (sf > 1) {
+        /**
+         * +-------------+
+         * |  +-------+  |
+         * |  |       |  |
+         * |  +-------+  |
+         * +-------------+
+         *  The outer box is the viewport where we want to
+         *  show the image. The inner box is the dimension of
+         *  the image that will eventually get zoomed in.
+         *  If the size of the loaded image is less than the
+         *  view port, we use the size of the image as the
+         *  clip region then we scale the image directly.
+         */
+        const [leftX, topY] = [
+          Math.max(0, startX + w * (1 - sc) * 0.5),
+          Math.max(0, startY + h * (1 - sc) * 0.5)
+        ];
+        const [width, height] = [sc * w, sc * h];
+        const [scw, sch] = [w, h];
+        let [minX, minY] = [
+          Math.max(0, leftX + this._zoomX),
+          Math.max(0, topY + this._zoomY)
+        ];
+        if (minX + width > iw) {
+          minX = Math.max(0, minX - (minX + width) + iw);
+        }
+        if (minY + height > ih) {
+          minY = Math.max(0, minY - (minY + height) + ih);
+        }
+        pb = image
+          .new_subpixbuf(minX, minY, width, height)
+          .scale_simple(scw, sch, GdkPixbuf.InterpType.BILINEAR);
+        if (!this._dragZoom) {
+          this._leftX = leftX;
+          this._topY = topY;
+          this._zoomedWidth = width;
+          this._zoomedHeight = height;
+        }
+      } else if (sf < 1) {
+        const [leftX, topY] = [
+          Math.max(0, startX + w * (1 - sc) * 0.5),
+          Math.max(0, startY + h * (1 - sc) * 0.5)
+        ];
+        const [rightX, bottomY] = [
+          Math.min(iw, startX + w * (1 + sc) * 0.5),
+          Math.min(ih, startY + h * (1 + sc) * 0.5)
+        ];
+        const [width, height] = [rightX - leftX, bottomY - topY];
+        const [scw, sch] = [width * sf, height * sf];
+        let [minX, minY] = [
+          Math.max(0, leftX + this._zoomX),
+          Math.max(0, topY + this._zoomY)
+        ];
+        /**
+         * Expand if the panning position is set to start,
+         * at zoom level 1 and we then zoom out and pan,
+         * trying to zoom out will lead to problems requiring
+         * the leftmost coordinates to be expanded backwards.
+         */
+        if (minX + width > iw) {
+          minX = Math.max(0, minX - (minX + width) + iw);
+        }
+        if (minY + height > ih) {
+          minY = Math.max(0, minY - (minY + height) + ih);
+        }
+        pb = image
+          .new_subpixbuf(minX, minY, width, height)
+          .scale_simple(scw, sch, GdkPixbuf.InterpType.BILINEAR);
+        if (!this._dragZoom) {
+          this._leftX = leftX;
+          this._topY = topY;
+          this._zoomedWidth = width;
+          this._zoomedHeight = height;
+        }
+      } else {
+        pb = image.new_subpixbuf(startX, startY, w, h);
+      }
+
+      return pb;
     }
 
     _unload() {
@@ -226,17 +354,103 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _reload() {
+      if (!this._filename) {
+        return;
+      }
       const [width, height] = this._getMaxSize();
-      const [pixWidth, pixHeight] = [
-        this._pixbuf.get_width(),
-        this._pixbuf.get_height()
-      ];
-
+      const [pixWidth, pixHeight] = this._getBufferArea();
       this.emit('lock-axis', {
         X_AXIS: pixWidth - width,
         Y_AXIS: pixHeight - height
       });
       this._redraw(0, 0);
+    }
+
+    _getBufferArea() {
+      const width = this._origPixbuf.get_width();
+      const height = this._origPixbuf.get_height();
+      return [width, height];
+    }
+
+    _loadScaled() {
+      const sf = this._getScale();
+      /**
+       * The implementation of zoom here is such that
+       * the main window doesn't expand past the original
+       * image size and not the expanded image size. You
+       * have to pan around the view to be able to view
+       * the scaled up image.
+       * We use different variables to monitor panning
+       * actions. For scale level 1 (no scaling), we use
+       * `this._xpos` and `this._ypos`. For other levels,
+       * we use `this._zoomX` and `this._zoomY` to keep
+       * track of their panning. Here comes the issue,
+       * we need a way of synchronizing the panning
+       * activity on other zoom levels with scale level 1.
+       * We do this by computing the offset added due to
+       * scaling. We use the formula:
+       * scaleDelta = view-width * (1/s1 - 1/s0) * 1/2
+       * where `s0` is the previous scale and `s1` is the
+       * current scale (1).
+       * This gives us "zoom extent".
+       */
+      if (sf === 1) {
+        const [zoomWidth, zoomHeight] = this._getBufferArea();
+        const scaleDiff = this._lastScale - sf;
+        const halfWidth = this.width / 2;
+        const halfHeight = this.height / 2;
+        const scaleProd = sf * this._lastScale;
+        const scaleProp = scaleDiff / scaleProd;
+        const scaleDeltaX = halfWidth * scaleProp;
+        const scaleDeltaY = halfHeight * scaleProp;
+        let [minX, minY] = [
+          this._leftX + this._zoomX,
+          this._topY + this._zoomY
+        ];
+        // Downscaling...
+        if (this._lastScale > sf) {
+          if (minX <= scaleDeltaX) {
+            minX = 0;
+          } else if (minX + this._zoomedWidth + scaleDeltaX > zoomWidth) {
+            minX = Math.max(0, this._xpos + this._zoomX - scaleDeltaX);
+          } else {
+            minX = Math.max(0, this._xpos + this._zoomX);
+          }
+          if (minY <= scaleDeltaY) {
+            minY = 0;
+          } else if (minY + this._zoomedHeight + scaleDeltaY > zoomHeight) {
+            minY = Math.max(0, this._ypos + this._zoomY - scaleDeltaY);
+          } else {
+            minY = Math.max(0, this._ypos + this._zoomY);
+          }
+        } else {
+          if (minX <= scaleDeltaX) {
+            minX = 0;
+          } else if (minX + this._zoomedWidth >= zoomWidth) {
+            minX = Math.max(0, this._xpos + this._zoomX);
+          } else {
+            minX = Math.max(0, this._xpos + this._zoomX);
+          }
+          if (minY <= scaleDeltaY) {
+            minY = 0;
+          } else if (minY + this._zoomedHeight >= zoomHeight) {
+            minY = Math.max(0, this._ypos + this._zoomY);
+          } else {
+            minY = Math.max(0, this._ypos + this._zoomY);
+          }
+        }
+        this._xpos = minX;
+        this._ypos = minY;
+        this._leftX = 0;
+        this._topY = 0;
+        this._zoomX = 0;
+        this._zoomY = 0;
+        this._zoomedWidth = 0;
+        this._zoomedHeight = 0;
+      }
+      this._dragZoom = false;
+      this._canvas.invalidate();
+      this._lastScale = sf;
     }
 
     _getMaxSize() {
@@ -245,10 +459,7 @@ var UIImageRenderer = GObject.registerClass(
     }
 
     _render(deltaX, deltaY, maxWidth, maxHeight) {
-      const [pixWidth, pixHeight] = [
-        this._pixbuf.get_width(),
-        this._pixbuf.get_height()
-      ];
+      const [pixWidth, pixHeight] = this._getBufferArea();
       this._isPanningEnabled = pixWidth > maxWidth || pixHeight > maxHeight;
       this._updateToolkits();
       const lockedAxis = {
@@ -280,6 +491,16 @@ var UIImageRenderer = GObject.registerClass(
             pixHeight - this._ypos - maxHeight
           );
         }
+
+        /**
+         * If we are resizing and we are scaled, we need to update the
+         * coordinate of the zoom control points. The flag
+         * `this._dragZoom` indicates that we are not in drag or zoom
+         * mode (in this context).
+         */
+        if (this._isScaled()) {
+          this._dragZoom = false;
+        }
       }
 
       this._canvas.invalidate();
@@ -307,6 +528,10 @@ var UIImageRenderer = GObject.registerClass(
 
       this._xpos = pos?.x ?? 0;
       this._ypos = pos?.y ?? 0;
+    }
+
+    _getScale() {
+      return this._zoomToolBox.zoomFactor;
     }
 
     _copyTextToClipboard(text, message) {
@@ -699,13 +924,13 @@ var UIImageRenderer = GObject.registerClass(
         return Clutter.EVENT_STOP;
       } else if (event.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
         if (symbol === Clutter.KEY_r || symbol === Clutter.KEY_R) {
-          this._pixbuf = this._pixbuf.rotate_simple(
+          this._origPixbuf = this._origPixbuf.rotate_simple(
             GdkPixbuf.PixbufRotation.CLOCKWISE
           );
           this._reOrient(1);
           this._reload();
         } else if (symbol === Clutter.KEY_l || symbol === Clutter.KEY_L) {
-          this._pixbuf = this._pixbuf.rotate_simple(
+          this._origPixbuf = this._origPixbuf.rotate_simple(
             GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE
           );
           this._reOrient(N_AXIS - 1);
@@ -721,6 +946,10 @@ var UIImageRenderer = GObject.registerClass(
           } else {
             this._copyTextToClipboard(this._ocrText.get_text(), 'Text copied');
           }
+        } else if (symbol === Clutter.KEY_plus) {
+          this._zoomToolBox._zoomFeedIn();
+        } else if (symbol === Clutter.KEY_minus) {
+          this._zoomToolBox._zoomFeedOut();
         }
       } else if (symbol === Clutter.KEY_Delete) {
         lg(
@@ -775,6 +1004,10 @@ var UIImageRenderer = GObject.registerClass(
       return true;
     }
 
+    _isScaled() {
+      return this._zoomToolBox.isScaled;
+    }
+
     _onPress(event, button, sequence) {
       if (this._dragButton) {
         return Clutter.EVENT_PROPAGATE;
@@ -808,6 +1041,8 @@ var UIImageRenderer = GObject.registerClass(
         this._processSnipCapture();
       }
 
+      this._zoomToolBox.fadeIn();
+
       const [x, y] = [event.x, event.y];
       global.display.set_cursor(Meta.Cursor.DEFAULT);
 
@@ -837,46 +1072,83 @@ var UIImageRenderer = GObject.registerClass(
       let dx = Math.round(x - this._dragX);
       let dy = Math.round(y - this._dragY);
 
-      const [maxWidth, maxHeight] = [
-        this._pixbuf.get_width(),
-        this._pixbuf.get_height()
-      ];
-
+      const [maxWidth, maxHeight] = this._getBufferArea();
       if (!this._isInSnipSession) {
         const panDirection = SETTING_NATURAL_PANNING ? -1 : 1;
-        if (maxWidth > this.width) {
-          this._xpos += panDirection * dx;
-          if (this._xpos < 0) {
-            const overshootX = -this._xpos;
-            this._xpos += overshootX;
-            dx -= overshootX;
+        if (!this._isScaled()) {
+          if (maxWidth > this.width) {
+            this._xpos += panDirection * dx;
+            if (this._xpos < 0) {
+              const overshootX = -this._xpos;
+              this._xpos += overshootX;
+              dx -= overshootX;
+            }
+            if (this._xpos + this.width - 1 >= maxWidth) {
+              const overshootX = maxWidth - (this._xpos + this.width - 1);
+              this._xpos += overshootX;
+              dx -= overshootX;
+            }
+          } else {
+            dx = 0;
           }
-          if (this._xpos + this.width - 1 >= maxWidth) {
-            const overshootX = maxWidth - (this._xpos + this.width - 1);
-            this._xpos += overshootX;
-            dx -= overshootX;
-          }
-        } else {
-          dx = 0;
-        }
 
-        if (maxHeight > this.height) {
-          this._ypos += panDirection * dy;
-          if (this._ypos < 0) {
-            const overshootY = -this._ypos;
-            this._ypos += overshootY;
-            dy -= overshootY;
-          }
-          if (this._ypos + this.height - 1 >= maxHeight) {
-            const overshootY = maxHeight - (this._ypos + this.height - 1);
-            this._ypos += overshootY;
-            dy -= overshootY;
+          if (maxHeight > this.height) {
+            this._ypos += panDirection * dy;
+            if (this._ypos < 0) {
+              const overshootY = -this._ypos;
+              this._ypos += overshootY;
+              dy -= overshootY;
+            }
+            if (this._ypos + this.height - 1 >= maxHeight) {
+              const overshootY = maxHeight - (this._ypos + this.height - 1);
+              this._ypos += overshootY;
+              dy -= overshootY;
+            }
+          } else {
+            dy = 0;
           }
         } else {
-          dy = 0;
+          const sf = this._getScale();
+          const zoomWidth = this._pixbuf.get_width();
+          const zoomHeight = this._pixbuf.get_height();
+          if (zoomWidth > this._zoomedWidth) {
+            this._zoomX += panDirection * dx;
+            const zoomX = this._zoomX + this._leftX;
+            if (zoomX < 0) {
+              const overshootX = -zoomX;
+              this._zoomX += overshootX;
+              dx -= overshootX;
+            }
+            if (zoomX + this._zoomedWidth - 1 >= zoomWidth) {
+              const overshootX = zoomWidth - (zoomX + this._zoomedWidth - 1);
+              this._zoomX += overshootX;
+              dx -= overshootX;
+            }
+          } else {
+            dx = 0;
+          }
+
+          if (zoomHeight > this._zoomedHeight) {
+            this._zoomY += panDirection * dy;
+            const zoomY = this._zoomY + this._topY;
+            if (zoomY < 0) {
+              const overshootY = -zoomY;
+              this._zoomY += overshootY;
+              dy -= overshootY;
+            }
+            if (zoomY + this._zoomedHeight - 1 >= zoomHeight) {
+              const overshootY = maxHeight - (zoomY + this._zoomedHeight - 1);
+              this._zoomY += overshootY;
+              dy -= overshootY;
+            }
+          } else {
+            dy = 0;
+          }
+          this._dragZoom = true;
         }
         this.emit('drag-action');
         this._canvas.invalidate();
+        this._zoomToolBox.fadeOut();
       } else {
         this._updateSnipIndicator();
       }
@@ -932,22 +1204,14 @@ var UIImageRenderer = GObject.registerClass(
 
     vfunc_enter_event(event) {
       const button = event.button;
-      lg(
-        '[UIImageRenderer::vfunc_enter_event] maybeDragging something: ',
-        event.type,
-        event.device,
-        event.flags,
-        event.sequence
-      );
       this.grab_key_focus();
       this._updateCursor();
-      return super.vfunc_enter_event(event);
+      return Clutter.EVENT_PROPAGATE;
     }
 
     vfunc_leave_event(event) {
-      lg('[UIImageRenderer::vfunc_leave_event]');
       global.stage.set_key_focus(global.stage);
-      return super.vfunc_leave_event(event);
+      return Clutter.EVENT_PROPAGATE;
     }
   }
 );
@@ -1157,6 +1421,237 @@ const UIOcrTip = GObject.registerClass(
     vfunc_enter_event(event) {
       lg('[Tooltip::vfunc_enter_event]');
       return super.vfunc_enter_event(event);
+    }
+  }
+);
+
+const ZOOM_STEP = 1;
+const ZOOM_SCALES = [
+  0.08, 0.1, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.4, 2.6, 2.8,
+  3, 3.2, 3.4, 3.8, 4
+];
+const MAX_ZOOM_LEVEL = ZOOM_SCALES.length;
+const UIZoomTool = GObject.registerClass(
+  class UIZoomTool extends St.Widget {
+    _init(anchor) {
+      super._init({
+        name: 'UIZoomTool',
+        x: 0,
+        y: 0,
+        reactive: true,
+        visible: false,
+        opacity: 0
+      });
+      this._anchor = anchor;
+      this._zoomLevel = this._getDefault();
+
+      this._zoomScaleLabel = new St.Label({
+        style_class: 'pixzzle-ui-zoom-scale-label',
+        x_align: Clutter.ActorAlign.CENTER,
+        y_align: Clutter.ActorAlign.CENTER,
+        x_expand: false,
+        y_expand: false
+      });
+      this.add_child(this._zoomScaleLabel);
+
+      this._zoomBox = new St.BoxLayout({
+        style_class: 'pixzzle-ui-zoom-box',
+        x_expand: true,
+        y_expand: true,
+        vertical: false
+      });
+      this.add_child(this._zoomBox);
+
+      this._zoomIn = new St.Button({
+        style_class: 'pixzzle-ui-zoom-in',
+        pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+        scale_x: 1,
+        scale_y: 1,
+        child: new St.Icon({
+          gicon: Gio.icon_new_for_string(
+            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-in.svg`
+          )
+        })
+      });
+      this._zoomIn.connect('enter-event', this._animateButton.bind(this));
+      this._zoomIn.connect('leave-event', this._animateButton.bind(this));
+      this._zoomIn.connect('clicked', this._zoomFeedIn.bind(this));
+      this._zoomBox.add_child(this._zoomIn);
+
+      this._zoomFit = new St.Button({
+        style_class: 'pixzzle-ui-zoom-fit',
+        pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+        scale_x: 1,
+        scale_y: 1,
+        child: new St.Icon({
+          gicon: Gio.icon_new_for_string(
+            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-fit.svg`
+          )
+        })
+      });
+      this._zoomFit.connect('enter-event', this._animateButton.bind(this));
+      this._zoomFit.connect('leave-event', this._animateButton.bind(this));
+      this._zoomFit.connect('clicked', this._zoomFeedDefault.bind(this));
+      this._zoomBox.add_child(this._zoomFit);
+
+      this._zoomOut = new St.Button({
+        style_class: 'pixzzle-ui-zoom-out',
+        pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+        scale_x: 1,
+        scale_y: 1,
+        child: new St.Icon({
+          gicon: Gio.icon_new_for_string(
+            `${getIconsLocation().get_path()}/pixzzle-ui-zoom-out.svg`
+          )
+        })
+      });
+      this._zoomOut.connect('enter-event', this._animateButton.bind(this));
+      this._zoomOut.connect('leave-event', this._animateButton.bind(this));
+      this._zoomOut.connect('clicked', this._zoomFeedOut.bind(this));
+      this._zoomBox.add_child(this._zoomOut);
+
+      this._zoomBox.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this._anchor,
+          align_axis: Clutter.AlignAxis.Y_AXIS,
+          factor: 1
+        })
+      );
+      this._zoomBox.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this._anchor,
+          align_axis: Clutter.AlignAxis.X_AXIS,
+          factor: 0.5
+        })
+      );
+
+      this._zoomScaleLabel.add_constraint(
+        new Clutter.AlignConstraint({
+          source: this._anchor,
+          align_axis: Clutter.AlignAxis.X_AXIS,
+          pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
+          factor: 0.5
+        })
+      );
+
+      this._updateZoomLabel();
+      DockUtil.registerAppOwner(DockUtil.AppsID.ZOOM, {
+        activate: this._toggleVisible.bind(this)
+      });
+    }
+
+    _zoomFeedOut(button) {
+      if (this._zoomLevel === 0) {
+        this._zoomOut.add_style_class_name('zoom-disabled');
+        return;
+      }
+
+      this._zoomOut.remove_style_class_name('zoom-disabled');
+      this._zoomLevel -= ZOOM_STEP;
+      this._updateZoom();
+      lg('[UIZoomTool::_zoomFeedOut] zoomFactor:', this.zoomFactor);
+    }
+
+    _zoomFeedIn(button) {
+      if (this._zoomLevel >= MAX_ZOOM_LEVEL - 1) {
+        this._zoomIn.add_style_class_name('zoom-disabled');
+        return;
+      }
+
+      this._zoomIn.remove_style_class_name('zoom-disabled');
+      this._zoomLevel += ZOOM_STEP;
+      this._updateZoom();
+      lg('[UIZoomTool::_zoomFeedOut] zoomFactor:', this.zoomFactor);
+    }
+
+    _zoomFeedDefault(button) {
+      if (this._zoomLevel === this._getDefault()) {
+        return;
+      }
+
+      this._zoomLevel = this._getDefault();
+      this._updateZoom();
+    }
+
+    _updateZoom() {
+      this._updateZoomLabel();
+      this._anchor._loadScaled();
+    }
+
+    get zoomFactor() {
+      return ZOOM_SCALES[this._zoomLevel];
+    }
+
+    get isScaled() {
+      return this.zoomFactor !== 1;
+    }
+
+    resetZoom() {
+      this._zoomLevel = this._getDefault();
+      this._updateZoomLabel();
+    }
+
+    _toggleVisible() {
+      if (this.visible) {
+        this.ease({
+          opacity: 0,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => this.hide()
+        });
+      } else {
+        this.show();
+        this.ease({
+          opacity: Constants.FULLY_OPAQUE,
+          duration: 200,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD
+        });
+      }
+    }
+
+    fadeOut() {
+      this._fade(Math.floor(Constants.FULLY_OPAQUE / 2));
+    }
+
+    fadeIn() {
+      this._fade(Constants.FULLY_OPAQUE);
+    }
+
+    _fade(opacity) {
+      if (this.opacity === opacity) {
+        return;
+      }
+
+      this.ease({
+        opacity,
+        duration: 200,
+        mode: Clutter.AnimationMode.EASE_OUT_QUAD
+      });
+    }
+
+    _updateZoomLabel() {
+      const percentage = Math.round(this.zoomFactor * 100);
+      this._zoomScaleLabel.set_text(`${percentage}%`);
+    }
+
+    _getDefault() {
+      return ZOOM_SCALES.indexOf(1);
+    }
+
+    _animateButton(button) {
+      const scale_offsets = [1, 1.1];
+      const scaleXOff = scale_offsets[Number(button.scale_x <= 1)];
+      const scaleYOff = scale_offsets[Number(button.scale_y <= 1)];
+      button.ease({
+        scale_x: scaleXOff,
+        duration: 200,
+        mode: Clutter.AnimationMode.EASE_OUT_BOUNCE
+      });
+      button.ease({
+        scale_y: scaleYOff,
+        duration: 200,
+        mode: Clutter.AnimationMode.EASE_OUT_BOUNCE
+      });
     }
   }
 );

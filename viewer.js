@@ -66,10 +66,10 @@ const Prefs = Me.imports.prefs;
 const { getActionWatcher } = Me.imports.watcher;
 const { Timer } = Me.imports.timer;
 const { UITooltip } = Me.imports.tooltip;
-const { UIImageRenderer } = Me.imports.renderer;
 const Dialog = Me.imports.dialog;
 const Docking = Me.imports.dock.docking;
 const DockUtil = Me.imports.dock.utils;
+const { UIImageRenderer } = Me.imports.renderer;
 
 const INITIAL_WIDTH = 500;
 const INITIAL_HEIGHT = 600;
@@ -449,6 +449,8 @@ var UIMainViewer = GObject.registerClass(
           }
           yGap = 0;
         }
+        lg('[UIMainViewer::_init::_imageView::lock-axis] xGap:', xGap,
+        'yGap:', yGap);
         this._updateSize();
 
         this._maxXSwing = Math.min(
@@ -462,6 +464,7 @@ var UIMainViewer = GObject.registerClass(
 
         this._updateDockPosition();
       });
+
       this._imageView.connect('clean-slate', () => {
         this._maxXSwing = INITIAL_WIDTH;
         this._maxYSwing = INITIAL_HEIGHT;
@@ -765,7 +768,7 @@ var UIMainViewer = GObject.registerClass(
         global.window_manager.disconnect(this._settingsId);
       });
 
-      ExtensionUtils.openPrefs();
+      ExtensionUtils.openPrefs()?.catch(logError);
     }
 
     _adjustPreferencesWindow() {
