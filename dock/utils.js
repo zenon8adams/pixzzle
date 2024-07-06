@@ -332,6 +332,11 @@ var AppsScaffold = {
     can_disable: true,
     animatable: false,
     simulation: {
+      event: {
+        keyval: Clutter.KEY_Z,
+        modifier_state: 0,
+        is_simulation: true
+      },
       hideOnTrigger: false,
       activate: null
     }
