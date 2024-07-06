@@ -81,21 +81,8 @@ var UIImageRenderer = GObject.registerClass(
       });
       this._xpos = 0;
       this._ypos = 0;
-      /**
-       * leftX, topY, zoomX, zoomY,
-       * zoomedWidth, zoomedHeight => Holds panning
-       * information during zoom operation.
-       */
-      this._leftX = 0;
-      this._topY = 0;
-      this._zoomX = 0;
-      this._zoomY = 0;
-      this._lastScale = -1;
-      this._zoomedWidth = 0;
-      this._zoomedHeight = 0;
       this._anchor = anchor;
-      // Are we panning on a zoomed image?
-      this._dragZoom = false;
+      this._resetZoom();
 
       lg('[UIImageRenderer::_init]');
       this._canvas = new Clutter.Canvas();
@@ -235,7 +222,7 @@ var UIImageRenderer = GObject.registerClass(
         this.emit('clean-slate');
         this._isPanningEnabled = false;
         this._origPixbuf = null;
-        this._zoomToolBox.resetZoom();
+        this._resetZoom();
       } else if (newFile !== this._filename) {
         /*
          * Since we support rotation, create
@@ -252,10 +239,30 @@ var UIImageRenderer = GObject.registerClass(
           this._pixbuf = pixbuf;
           this._origPixbuf = pixbuf;
           this._filename = newFile;
-          this._zoomToolBox.resetZoom();
+          this._resetZoom();
           this._reload();
         }
       }
+    }
+
+    _resetZoom() {
+      /**
+       * leftX, topY, zoomX, zoomY,
+       * zoomedWidth, zoomedHeight => Holds panning
+       * information during zoom operation.
+       */
+      this._leftX = 0;
+      this._topY = 0;
+      this._zoomX = 0;
+      this._zoomY = 0;
+      this._scaleX = 1;
+      this._scaleY = 1;
+      this._lastScale = -1;
+      this._zoomedWidth = 0;
+      this._zoomedHeight = 0;
+      // Are we panning on a zoomed image?
+      this._dragZoom = false;
+      this._zoomToolBox?.resetZoom();
     }
 
     _pixbufAfterTransform(startX, startY, w, h) {
@@ -279,31 +286,96 @@ var UIImageRenderer = GObject.registerClass(
          *  If the size of the loaded image is less than the
          *  view port, we use the size of the image as the
          *  clip region then we scale the image directly.
+         * 
+         *  NB! If the image fits into our viewport, we have
+         *  to zoom the whole image. `leftX`, `topY`, `width`
+         *  and `height` all holds the dimension of the whole
+         *  image to be scaled up.
          */
-        const [leftX, topY] = [
-          Math.max(0, startX + w * (1 - sc) * 0.5),
-          Math.max(0, startY + h * (1 - sc) * 0.5)
+        let [leftX, topY] = [
+          Math.max(0, startX + (vw > iw ? 0 : w * (1 - sc) * 0.5)),
+          Math.max(0, startY + (vh > ih ? 0 : h * (1 - sc) * 0.5))
         ];
-        const [width, height] = [sc * w, sc * h];
-        const [scw, sch] = [w, h];
-        let [minX, minY] = [
-          Math.max(0, leftX + this._zoomX),
-          Math.max(0, topY + this._zoomY)
-        ];
-        if (minX + width > iw) {
-          minX = Math.max(0, minX - (minX + width) + iw);
+        let [width, height] = [vw > iw ? w : sc * w, vh > ih ? h : sc * h];
+        const [scw, sch] = [vw > iw ? w * sf : w, vh > ih ? h * sf : h];
+        let minX = leftX;
+        let minY = topY;
+        let x_pan = false;
+        let y_pan = false;
+        /**
+         * The image is larger than the viewport, we can move
+         * the cursor to the currently viewed portion of the
+         * image by applying the `zoomX` and `zoomY` to move
+         * the visible area of the image.
+         */
+        if (iw >= vw) {
+        /**
+         * Expand if the panning position is set to start,
+         * at zoom level 1 and we then zoom out and pan,
+         * trying to zoom out will lead to problems requiring
+         * the leftmost coordinates to be expanded backwards.
+         */
+          minX = Math.max(0, minX + this._zoomX);
+          if (minX + width > iw) {
+            minX = Math.max(0, minX - (minX + width) + iw);
+          }
         }
-        if (minY + height > ih) {
-          minY = Math.max(0, minY - (minY + height) + ih);
+        if (ih >= vh) {
+          minY = Math.max(0, topY + this._zoomY);
+          if (minY + height > ih) {
+            minY = Math.max(0, minY - (minY + height) + ih);
+          }
         }
         pb = image
           .new_subpixbuf(minX, minY, width, height)
           .scale_simple(scw, sch, GdkPixbuf.InterpType.BILINEAR);
+
+        /**
+         * Image fits into the viewport but zoomed
+         * version of image doesn't fit. We have to
+         * apply `zoomX` and `zoomY` to allow for
+         * panning.
+         */
+        if (vw > iw && scw > vw) {
+          leftX = (scw - vw) * 0.5;
+          minX = Math.max(0, leftX + this._zoomX);
+          if (minX + vw > scw) {
+            minX = Math.max(0, minX - (minX + vw) + scw);
+          }
+          x_pan = true;
+        }
+        if (vh > ih && sch > vh) {
+          topY = (sch - vh) * 0.5;
+          minY = Math.max(0, topY + this._zoomY);
+          if (minY + vh > sch) {
+            minY = Math.max(0, minY - (minY + vh) + sch);
+          }
+          y_pan = true;
+        }
+
+        if (x_pan || y_pan) {
+          /**
+           * Disable panning for the side that
+           * doesn't need it.
+           */
+          minX = iw >= vw ? 0 : minX;
+          minY = ih > vh ? 0 : minY;
+          pb = pb.new_subpixbuf(minX, minY, x_pan ? vw : scw, y_pan ? vh : sch);
+        }
+
         if (!this._dragZoom) {
           this._leftX = leftX;
           this._topY = topY;
           this._zoomedWidth = width;
           this._zoomedHeight = height;
+          /**
+           * If the image is smaller than the viewport,
+           * we have to scale the size of the original
+           * image by scale factor so that panning
+           * works.
+           */
+          this._scaleX = x_pan ? sf : 1;
+          this._scaleY = y_pan ? sf : 1;
         }
       } else if (sf < 1) {
         const [leftX, topY] = [
@@ -974,6 +1046,9 @@ var UIImageRenderer = GObject.registerClass(
           direction: Directivity.NEXT
         });
         return Clutter.EVENT_STOP;
+      } else if (symbol === Clutter.KEY_Z || symbol === Clutter.KEY_z) {
+          this._zoomToolBox.toggleVisible();
+
       } else if (isSnipAction.bind(this)(symbol)) {
         let oldSymbol = null;
         if (event.is_simulation) {
@@ -1109,8 +1184,8 @@ var UIImageRenderer = GObject.registerClass(
           }
         } else {
           const sf = this._getScale();
-          const zoomWidth = this._pixbuf.get_width();
-          const zoomHeight = this._pixbuf.get_height();
+          const zoomWidth = this._pixbuf.get_width() * this._scaleX;
+          const zoomHeight = this._pixbuf.get_height() * this._scaleY;
           if (zoomWidth > this._zoomedWidth) {
             this._zoomX += panDirection * dx;
             const zoomX = this._zoomX + this._leftX;
@@ -1536,7 +1611,7 @@ const UIZoomTool = GObject.registerClass(
 
       this._updateZoomLabel();
       DockUtil.registerAppOwner(DockUtil.AppsID.ZOOM, {
-        activate: this._toggleVisible.bind(this)
+        activate: this.toggleVisible.bind(this)
       });
     }
 
@@ -1591,7 +1666,8 @@ const UIZoomTool = GObject.registerClass(
       this._updateZoomLabel();
     }
 
-    _toggleVisible() {
+    toggleVisible() {
+      lg('[UIZoomTool::toggleVisible]');
       if (this.visible) {
         this.ease({
           opacity: 0,

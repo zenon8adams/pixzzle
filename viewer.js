@@ -449,8 +449,12 @@ var UIMainViewer = GObject.registerClass(
           }
           yGap = 0;
         }
-        lg('[UIMainViewer::_init::_imageView::lock-axis] xGap:', xGap,
-        'yGap:', yGap);
+        lg(
+          '[UIMainViewer::_init::_imageView::lock-axis] xGap:',
+          xGap,
+          'yGap:',
+          yGap
+        );
         this._updateSize();
 
         this._maxXSwing = Math.min(
@@ -465,34 +469,42 @@ var UIMainViewer = GObject.registerClass(
         this._updateDockPosition();
       });
 
-      this._imageView.connect('clean-slate', () => {
-        this._maxXSwing = INITIAL_WIDTH;
-        this._maxYSwing = INITIAL_HEIGHT;
-        const xOffset = this.width - INITIAL_WIDTH;
-        const yOffset = this.height - INITIAL_HEIGHT;
-        if (xOffset > 0) this._startX += xOffset;
-        if (yOffset > 0) this._startY += yOffset;
+      this._imageView.connectObject(
+        'clean-slate',
+        () => {
+          this._maxXSwing = INITIAL_WIDTH;
+          this._maxYSwing = INITIAL_HEIGHT;
+          const xOffset = this.width - INITIAL_WIDTH;
+          const yOffset = this.height - INITIAL_HEIGHT;
+          if (xOffset > 0) this._startX += xOffset;
+          if (yOffset > 0) this._startY += yOffset;
 
-        this._updateSize();
-        this._updateDockPosition();
-        this._emptyView = true;
-        this._dock._disableApps();
-        lg('[UIMainViewer::_init::_imageView::clean-slate] clean');
-      });
-      this._imageView.connect('enter-event', this._stopDrag.bind(this));
-      this._imageView.connect('switch-active', (me, detail) => {
-        lg('[UIMainViewer::_init::_imageViewer::switch-active]');
-        this._thumbnailView._switchActive(detail);
-      });
-      this._imageView.connect('new-shot', (me, shot) => {
-        this._folderView
-          .addNewShot({ name: shot })
-          .then(() => this._dock._show())
-          .catch(logError);
-      });
-      this._imageView.connect('drag-action', () => {
-        this._dock._hide();
-      });
+          this._updateSize();
+          this._updateDockPosition();
+          this._emptyView = true;
+          this._dock._disableApps();
+          lg('[UIMainViewer::_init::_imageView::clean-slate] clean');
+        },
+        'enter-event',
+        this._stopDrag.bind(this),
+        'switch-active',
+        (me, detail) => {
+          lg('[UIMainViewer::_init::_imageViewer::switch-active]');
+          this._thumbnailView._switchActive(detail);
+        },
+        'new-shot',
+        (me, shot) => {
+          this._folderView
+            .addNewShot({ name: shot })
+            .then(() => this._dock._show())
+            .catch(logError);
+        },
+        'drag-action',
+        () => {
+          this._dock._hide();
+        },
+        this
+      );
       this.add_child(this._dock);
 
       this.connect('notify::mapped', () => {
@@ -552,18 +564,17 @@ var UIMainViewer = GObject.registerClass(
     _showScreenshotView() {
       if (!this._shutter) {
         this._shutter = new Shutter.UIShutter();
-        this._shutterClosingHandler = this._shutter.connect(
+        this._shutter.connectObject(
           'begin-close',
           () => {
             lg('[UIMainViewer::_showScreenshotView::begin-close]');
             this._showUI();
-          }
-        );
-        this._shutterNewShotHandler = this._shutter.connect(
+          },
           'new-shot',
           (_, shot) => {
             this._folderView.addNewShot(shot).catch(logError);
-          }
+          },
+          this
         );
       }
 
@@ -644,12 +655,12 @@ var UIMainViewer = GObject.registerClass(
       if (state) {
         this._meltButton.ease({
           scale_x: 0,
-          duration: 200,
+          duration: 400,
           mode: Clutter.AnimationMode.EASE_OUT_QUAD
         });
         this._meltButton.ease({
           scale_y: 0,
-          duration: 200,
+          duration: 400,
           mode: Clutter.AnimationMode.EASE_OUT_QUAD,
           onComplete: () => {
             this._meltButton.hide();
@@ -1056,8 +1067,6 @@ var UIMainViewer = GObject.registerClass(
     _onDestroy() {
       this._close(true);
       if (this._shutter) {
-        this._shutter.disconnect(this._shutterClosingHandler);
-        this._shutter.disconnect(this._shutterNewShotHandler);
         this._shutter.destroy();
         this._shutter = null;
       }
@@ -2041,7 +2050,7 @@ const UIFolder = GObject.registerClass(
 
     _addFocusEffect() {
       const focusEffect = new Shell.BlurEffect({
-        brightness: Constants.FULLY_OPAQUE,
+        brightness: 1,
         mode: Shell.BlurMode.ACTOR,
         sigma: 5
       });
@@ -2297,7 +2306,7 @@ const UIPreview = GObject.registerClass(
          */
         this._surface.add_effect(
           new Shell.BlurEffect({
-            brightness: Constants.FULLY_OPAQUE,
+            brightness: 1,
             mode: Shell.BlurMode.ACTOR,
             sigma: 2.5
           })
