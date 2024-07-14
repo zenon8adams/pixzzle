@@ -359,6 +359,9 @@ var DockDash = GObject.registerClass(
     }
 
     _redisplay() {
+      if(!this._controller.mapped) {
+          return;
+      }
       lg('[DockDash::_redisplay] disabled on load:', this._disableAppsOnLoad);
       const current = this._box
         .get_children()

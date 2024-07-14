@@ -1124,6 +1124,7 @@ var UIMainViewer = GObject.registerClass(
       if (!this._isActive) {
         this.show();
         this._dock._show();
+        this._watcher.unmask();
       } else {
         this._closeSettings();
       }
@@ -1135,6 +1136,7 @@ var UIMainViewer = GObject.registerClass(
           if (this._isActive) {
             this.hide();
             this._dock._hide();
+            this._watcher.mask();
           }
           this._isActive = !this._isActive;
           lg('[UIMainViewer::_toggleUI]');

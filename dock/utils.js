@@ -326,7 +326,7 @@ var AppsScaffold = {
   },
   [AppsID.ZOOM]: {
     id: AppsID.ZOOM,
-    name: 'Launch Zoom',
+    name: 'Launch Zoom (Z)',
     icon: _gfullPathOf('pixzzle-ui-zoom-control.png'),
     disabled_icon: _dfullPathOf('pixzzle-ui-zoom-control-gray.png'),
     can_disable: true,
