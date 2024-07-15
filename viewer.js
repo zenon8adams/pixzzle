@@ -77,6 +77,11 @@ const ALLOWANCE = 80;
 const EDGE_THRESHOLD = 2;
 const MODAL_CHECK_INTERVAL = 300;
 const OCCLUSION_THRESHOLD = 50;
+const FlattenControlMode = Object.freeze({
+  INITIALIZING: Symbol('initializing'),
+  CONTROLLED: Symbol('controlled'),
+  ALWAYS: Symbol('always')
+});
 /*
  * Store metadata in image ancillary chunk
  * to detect if the image is smaller than
@@ -114,7 +119,7 @@ var UIMainViewer = GObject.registerClass(
 
       this._isActive = false;
       this._emptyView = true;
-      this._isFlattened = new GBoolean(true);
+      this._flatControlMode = FlattenControlMode.INITIALIZING;
 
       Main.layoutManager.addChrome(this);
       DockUtil.registerAppOwner(DockUtil.AppsID.TAKE_SCREENSHOT, {
@@ -328,8 +333,12 @@ var UIMainViewer = GObject.registerClass(
       });
       this._folderView.connect('swap-view', (widget, payload) => {
         this._thumbnailView.reload(payload, () => {
+          if (this._flatControlMode === FlattenControlMode.INITIALIZING) {
+            this._flatControlMode = FlattenControlMode.CONTROLLED;
+          } else {
+            this._flatControlMode = FlattenControlMode.ALWAYS;
+          }
           this._swapButton.checked = false;
-          this._groupingEnabled = !!payload.date;
         });
       });
       this._folderView.connect('enter-event', this._stopDrag.bind(this));
@@ -402,7 +411,7 @@ var UIMainViewer = GObject.registerClass(
         x_expand: false,
         reactive: true,
         x_align: Clutter.ActorAlign.CENTER,
-        visible: !this._isFlattened.get_value(),
+        visible: false,
         pivot_point: new Graphene.Point({ x: 0.5, y: 0.5 }),
         x: 0,
         y: 0
@@ -410,13 +419,9 @@ var UIMainViewer = GObject.registerClass(
       this.add_child(this._meltButton);
 
       this._meltButton.connect('clicked', () => {
-        this._isFlattened.set_value(true);
-      });
-      this._isFlattened.connect('notify::changed', (me) => {
-        if (me.get_value()) {
-          this._folderView.flatten();
-        }
-        this._animateFlatten(me.get_value());
+        this._flatControlMode = FlattenControlMode.INITIALIZING;
+        this._folderView.flatten();
+        this._animateFlatten(true);
       });
 
       this._imageView.connect('lock-axis', (_, axis) => {
@@ -489,7 +494,7 @@ var UIMainViewer = GObject.registerClass(
         this._stopDrag.bind(this),
         'switch-active',
         (me, detail) => {
-          lg('[UIMainViewer::_init::_imageViewer::switch-active]');
+          lg('[UIMainViewer::_init::_imageView::switch-active]');
           this._thumbnailView._switchActive(detail);
         },
         'new-shot',
@@ -692,24 +697,11 @@ var UIMainViewer = GObject.registerClass(
       } else {
         this._crossSlideAnimate(this._thumbnailView, this._folderView);
       }
-
-      if (!this._meltButton.visible) {
-        this._isFlattened.set_value(false);
-      }
-
-      /*
-       * When the MainViewer becomes visible,
-       * we show a list of all the shots
-       * taken. In this view mode, no `date`
-       * has been selected. We use this
-       * `_groupingEnabled` to determine if
-       * we are in this mode. We should
-       * keep hiding the melt button if
-       * we are back in this view mode.
-       */
-      if (!this._groupingEnabled) {
-        this._animateFlatten(!this._swapButton.checked);
-      }
+      this._animateFlatten(
+        this._flatControlMode === FlattenControlMode.ALWAYS
+          ? false
+          : !widget.checked
+      );
     }
 
     _crossSlideAnimate(one, other, cb) {
@@ -2397,43 +2389,6 @@ const UIPreview = GObject.registerClass(
         }
         stream.close(null);
       });
-    }
-  }
-);
-
-const GBoolean = GObject.registerClass(
-  {
-    Properties: {
-      changed: GObject.ParamSpec.boolean(
-        'changed',
-        'changed',
-        'changed',
-        GObject.ParamFlags.READABLE | GObject.ParamFlags.WRITABLE,
-        false,
-        true,
-        false
-      )
-    }
-  },
-
-  class GBoolean extends GObject.Object {
-    _init(initial_state) {
-      super._init();
-
-      this._value = initial_state;
-    }
-
-    get_value() {
-      return this._value;
-    }
-
-    set_value(new_val) {
-      if (new_val === this._value) {
-        return;
-      }
-
-      this._value = new_val;
-      this.notify('changed');
     }
   }
 );
