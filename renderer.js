@@ -245,6 +245,10 @@ var UIImageRenderer = GObject.registerClass(
       }
     }
 
+    currentShot() {
+      return this._filename;
+    }
+
     _resetZoom() {
       /**
        * leftX, topY, zoomX, zoomY,
@@ -286,7 +290,7 @@ var UIImageRenderer = GObject.registerClass(
          *  If the size of the loaded image is less than the
          *  view port, we use the size of the image as the
          *  clip region then we scale the image directly.
-         * 
+         *
          *  NB! If the image fits into our viewport, we have
          *  to zoom the whole image. `leftX`, `topY`, `width`
          *  and `height` all holds the dimension of the whole
@@ -309,12 +313,12 @@ var UIImageRenderer = GObject.registerClass(
          * the visible area of the image.
          */
         if (iw >= vw) {
-        /**
-         * Expand if the panning position is set to start,
-         * at zoom level 1 and we then zoom out and pan,
-         * trying to zoom out will lead to problems requiring
-         * the leftmost coordinates to be expanded backwards.
-         */
+          /**
+           * Expand if the panning position is set to start,
+           * at zoom level 1 and we then zoom out and pan,
+           * trying to zoom out will lead to problems requiring
+           * the leftmost coordinates to be expanded backwards.
+           */
           minX = Math.max(0, minX + this._zoomX);
           if (minX + width > iw) {
             minX = Math.max(0, minX - (minX + width) + iw);
@@ -1047,8 +1051,7 @@ var UIImageRenderer = GObject.registerClass(
         });
         return Clutter.EVENT_STOP;
       } else if (symbol === Clutter.KEY_Z || symbol === Clutter.KEY_z) {
-          this._zoomToolBox.toggleVisible();
-
+        this._zoomToolBox.toggleVisible();
       } else if (isSnipAction.bind(this)(symbol)) {
         let oldSymbol = null;
         if (event.is_simulation) {

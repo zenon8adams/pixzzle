@@ -107,10 +107,8 @@ var UIMainViewer = GObject.registerClass(
         can_focus: true
       });
 
-      const seat = Clutter.get_default_backend().get_default_seat();
       this._dragButton = 0;
       this._dragSequence = null;
-      this._pointerDev = seat.get_pointer();
 
       this._startX = -1;
       this._startY = 0;
@@ -261,12 +259,6 @@ var UIMainViewer = GObject.registerClass(
       });
       this._buttonBox.add_child(this._settingsButton);
       this._settingsButton.set_pivot_point(0.5, 0.5);
-      this._settingsButton.connect(
-        'notify::hover',
-        this._animateSettings.bind(this)
-      );
-      this._settingsButton.connect('clicked', this._openSettings.bind(this));
-      this._settingsButton.connect('enter-event', this._stopDrag.bind(this));
 
       this._settingsButtonTooltip = new UITooltip(this._settingsButton, {
         text: _('Open settings'),
@@ -325,24 +317,14 @@ var UIMainViewer = GObject.registerClass(
       );
       this._screenshotButton.connect('enter-event', this._stopDrag.bind(this));
 
+      this._imageView = new UIImageRenderer(this);
       this._folderView = new UIFolderViewer({
         name: 'UIFolderViewer',
         x_expand: false,
         visible: false,
-        height: 0
+        height: 0,
+        display: this._imageView
       });
-      this._folderView.connect('swap-view', (widget, payload) => {
-        this._thumbnailView.reload(payload, () => {
-          if (this._flatControlMode === FlattenControlMode.INITIALIZING) {
-            this._flatControlMode = FlattenControlMode.CONTROLLED;
-          } else {
-            this._flatControlMode = FlattenControlMode.ALWAYS;
-          }
-          this._swapButton.checked = false;
-        });
-      });
-      this._folderView.connect('enter-event', this._stopDrag.bind(this));
-
       this._thumbnailView = new UIThumbnailViewer({
         name: 'UIThumbnailViewer',
         sibling: this._folderView,
@@ -351,7 +333,6 @@ var UIMainViewer = GObject.registerClass(
         visible: true
       });
 
-      this._imageView = new UIImageRenderer(this);
       this._box.add_child(this._imageView);
       this._imageView.add_constraint(
         new Clutter.SnapConstraint({
@@ -373,28 +354,6 @@ var UIMainViewer = GObject.registerClass(
         height: 0.9 * this.height,
         docker: this._imageView
       });
-      this._dock.connect('notify::width', () => this._updateDockPosition());
-      this._thumbnailView.connect('replace', (_, shot) => {
-        this._imageView._replace(shot);
-        this._folderView._setFocusOn(shot.name);
-        this._emptyView = this._thumbnailView._shotCount() == 0;
-        if (this._emptyView) {
-          this._swapButton.checked = true;
-          this._imageView.abortSnipSession();
-        } else {
-          this._dock._enableApps();
-        }
-      });
-      this._thumbnailView.connect('enter-event', this._stopDrag.bind(this));
-      this._thumbnailView.connect('notify::loaded', () => {
-        lg('[UIMainViewer::_init::_thumbnailView::notify::loaded]');
-        this._emptyView = this._thumbnailView._shotCount() == 0;
-        if (this._emptyView) {
-          this._dock.dash._setAppsDisabledOnLoad();
-        }
-        this._toggleSwap(this._swapButton);
-      });
-
       this._swapView.add_child(this._thumbnailView);
       this._swapView.add_child(this._folderView);
 
@@ -418,63 +377,146 @@ var UIMainViewer = GObject.registerClass(
       });
       this.add_child(this._meltButton);
 
+      this.add_child(this._dock);
+
+      this._bindSignals();
+      this._loadSettings();
+      this.connect('destroy', this._onDestroy.bind(this));
+      this._reload_theme();
+    }
+
+    _bindSignals() {
+      this._bindImageViewerSignals();
+      this._bindThumbnailViewerSignals();
+      this._bindFolderViewerSignals();
+      this._dock.connect('notify::width', () => this._updateDockPosition());
+      this._settingsButton.connectObject(
+        'notify::hover',
+        this._animateSettings.bind(this),
+        'clicked',
+        this._openSettings.bind(this),
+        'enter-event',
+        this._stopDrag.bind(this),
+        this
+      );
       this._meltButton.connect('clicked', () => {
         this._flatControlMode = FlattenControlMode.INITIALIZING;
         this._folderView.flatten();
         this._animateFlatten(true);
       });
+      this.connect('notify::mapped', () => {
+        this._animateSettings();
+        // Run only once for the lifetime of the
+        // application
+        if (!this._viewInitialized) {
+          this._folderView.flatten();
+          this._updateDockPosition();
 
-      this._imageView.connect('lock-axis', (_, axis) => {
-        lg('[UIMainViewer::_init::_imageView::lock-axis]');
-        let xGap = axis.X_AXIS;
-        let yGap = axis.Y_AXIS;
-        /*
-         * If a new image has been loaded into the big view
-         * and it has a smaller size than the previous one,
-         * reset our size to default.
-         * If our old image has a bigger size than the new
-         * one, we shouldn't go back to the default size,
-         * we should move back just the enough distance
-         * the full image.
-         */
-        if (xGap < 0) {
-          if (this._lastX - (this._startX - xGap) + 1 >= INITIAL_WIDTH) {
-            this._startX += -xGap;
-          } else {
-            this._startX = this._lastX + 1 - INITIAL_WIDTH;
-          }
-          xGap = 0;
+          this._viewInitialized = true;
         }
-
-        if (yGap < 0) {
-          if (this._lastY - (this._startY - yGap) + 1 >= INITIAL_HEIGHT) {
-            this._startY += -yGap;
-          } else {
-            this._startY = this._lastY + 1 - INITIAL_HEIGHT;
-          }
-          yGap = 0;
-        }
-        lg(
-          '[UIMainViewer::_init::_imageView::lock-axis] xGap:',
-          xGap,
-          'yGap:',
-          yGap
-        );
-        this._updateSize();
-
-        this._maxXSwing = Math.min(
-          this.width + xGap,
-          this._activeMonitor.width
-        );
-        this._maxYSwing = Math.min(
-          this.height + yGap,
-          this._activeMonitor.height
-        );
-
-        this._updateDockPosition();
       });
+    }
 
+    _bindFolderViewerSignals() {
+      this._folderView.connectObject(
+        'swap-view',
+        (widget, payload) => {
+          this._thumbnailView.reload(payload, () => {
+            if (this._flatControlMode === FlattenControlMode.INITIALIZING) {
+              this._flatControlMode = FlattenControlMode.CONTROLLED;
+            } else {
+              this._flatControlMode = FlattenControlMode.ALWAYS;
+            }
+            this._swapButton.checked = false;
+          });
+        },
+        'enter-event',
+        this._stopDrag.bind(this),
+        this
+      );
+    }
+
+    _bindThumbnailViewerSignals() {
+      this._thumbnailView.connectObject(
+        'replace',
+        (_, shot) => {
+          this._imageView._replace(shot);
+          this._folderView._setFocusOn(shot.name);
+          this._emptyView = this._thumbnailView._shotCount() == 0;
+          if (this._emptyView) {
+            this._swapButton.checked = true;
+            this._imageView.abortSnipSession();
+          } else {
+            this._dock._enableApps();
+          }
+        },
+        'enter-event',
+        this._stopDrag.bind(this),
+        'notify::loaded',
+        () => {
+          lg('[UIMainViewer::_init::_thumbnailView::notify::loaded]');
+          this._emptyView = this._thumbnailView._shotCount() == 0;
+          if (this._emptyView) {
+            this._dock.dash._setAppsDisabledOnLoad();
+          }
+          this._toggleSwap(this._swapButton);
+        },
+        this
+      );
+    }
+
+    _bindImageViewerSignals() {
       this._imageView.connectObject(
+        'lock-axis',
+        (_, axis) => {
+          lg('[UIMainViewer::_init::_imageView::lock-axis]');
+          let xGap = axis.X_AXIS;
+          let yGap = axis.Y_AXIS;
+          /*
+           * If a new image has been loaded into the big view
+           * and it has a smaller size than the previous one,
+           * reset our size to default.
+           * If our old image has a bigger size than the new
+           * one, we shouldn't go back to the default size,
+           * we should move back just the enough distance
+           * the full image.
+           */
+          if (xGap < 0) {
+            if (this._lastX - (this._startX - xGap) + 1 >= INITIAL_WIDTH) {
+              this._startX += -xGap;
+            } else {
+              this._startX = this._lastX + 1 - INITIAL_WIDTH;
+            }
+            xGap = 0;
+          }
+
+          if (yGap < 0) {
+            if (this._lastY - (this._startY - yGap) + 1 >= INITIAL_HEIGHT) {
+              this._startY += -yGap;
+            } else {
+              this._startY = this._lastY + 1 - INITIAL_HEIGHT;
+            }
+            yGap = 0;
+          }
+          lg(
+            '[UIMainViewer::_init::_imageView::lock-axis] xGap:',
+            xGap,
+            'yGap:',
+            yGap
+          );
+          this._updateSize();
+
+          this._maxXSwing = Math.min(
+            this.width + xGap,
+            this._activeMonitor.width
+          );
+          this._maxYSwing = Math.min(
+            this.height + yGap,
+            this._activeMonitor.height
+          );
+
+          this._updateDockPosition();
+        },
         'clean-slate',
         () => {
           this._maxXSwing = INITIAL_WIDTH;
@@ -508,25 +550,13 @@ var UIMainViewer = GObject.registerClass(
         () => {
           this._dock._hide();
         },
+        'enter-event',
+        () => {
+          lg('[UIMainViewer::_init::_imageView::enter-event]');
+          this._folderView._setFocusOnCurrentFolder();
+        },
         this
       );
-      this.add_child(this._dock);
-
-      this.connect('notify::mapped', () => {
-        this._animateSettings();
-        // Run only once for the lifetime of the
-        // application
-        if (!this._viewInitialized) {
-          this._folderView.flatten();
-          this._updateDockPosition();
-
-          this._viewInitialized = true;
-        }
-      });
-
-      this._loadSettings();
-      this.connect('destroy', this._onDestroy.bind(this));
-      this._reload_theme();
     }
 
     _updateDockPosition() {
@@ -1701,6 +1731,15 @@ const UIFolderViewer = GObject.registerClass(
     Signals: {
       replace: { param_types: [Object.prototype] },
       'swap-view': { param_types: [Object.prototype] }
+    },
+    Properties: {
+      display: GObject.ParamSpec.object(
+        'display',
+        'display',
+        'display',
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+        UIImageRenderer.$gtype
+      )
     }
   },
   class UIFolderViewer extends UISideViewBase {
@@ -1856,11 +1895,9 @@ const UIFolderViewer = GObject.registerClass(
     }
 
     _setFocusOnCurrentFolder() {
-      const allFolders = Object.values(this._folders);
-      const folder = allFolders.find(
-        (folder) => !folder.get_effect('focus-effect')
-      );
-      if (folder) {
+      const name = this.display.currentShot();
+      if (name) {
+        const folder = this._findFolderForShot(name);
         this._setFocusOnFolder(folder);
         ensureActorVisibleInScrollView(this._scrollView, folder._trigger);
       }
@@ -2073,7 +2110,7 @@ const UIThumbnailViewer = GObject.registerClass(
         'sibling',
         'sibling',
         'sibling',
-        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT,
+        GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
         UIFolderViewer.$gtype
       )
     }
