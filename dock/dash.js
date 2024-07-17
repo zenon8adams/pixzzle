@@ -379,15 +379,16 @@ var DockDash = GObject.registerClass(
     }
 
     _linkAppToSignal(app) {
-      app.connect('refresh', (_, props) => this._rewireApp(app, props));
-      app.connect('clicked', (_, { event }) => {
+      app.connectObject('refresh', (_, props) => this._rewireApp(app, props), this);
+      app.connectObject('clicked', (_, { event }) => {
+        lg('[DockDash::_linkAppToSignal::app::clicked]');
         if (event) {
           this._docker?._onKeyPress(event);
         } else {
           app.get_simulation().activate();
         }
         app.hide_on_trigger() && this._hide();
-      });
+      }, this);
       return app;
     }
 

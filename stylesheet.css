@@ -119,8 +119,7 @@
 .pixzzle-ui-ocr-action-button:focus,
 .pixzzle-ui-ocr-action-button:checked,
 .pixzzle-ui-expand-button:hover,
-.pixzzle-ui-expand-button:focus
-{
+.pixzzle-ui-expand-button:focus {
   background-color: rgba(237, 237, 237, 0.15);
 }
 
@@ -440,4 +439,48 @@
   padding: 0;
   padding-right: 4px;
   padding-left: 0px;
+}
+
+.pixzzle-ui-zoom-scale-label {
+  text-align: center;
+  font-size: 1.2em;
+  font-weight: 400;
+  font-style: italic;
+  padding: 6px;
+  background-color: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  border-radius: 4px;
+}
+
+.pixzzle-ui-zoom-box {
+  spacing: 5px;
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.pixzzle-ui-zoom-in {
+  margin-left: 8px;
+  margin-right: 0;
+}
+
+.pixzzle-ui-zoom-out {
+  margin-right: 8px;
+  margin-left: 0;
+}
+
+.pixzzle-ui-zoom-fit {
+  margin-right: 2px;
+  margin-left: 2px;
+  stroke: #fff;
+}
+
+.zoom-disabled {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+#UIZoomTool StIcon {
+  icon-size: 2.1em;
+  color: #fff;
+  margin-top: 8px;
+  margin-bottom: 8px;
 }
