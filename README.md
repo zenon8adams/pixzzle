@@ -17,6 +17,10 @@ Pixzzle is a dynamic GNOME extension written in GJS (GNOME JavaScript) that elev
 
 * Native GNOME Compatibility: Pixzzle is crafted with GJS to seamlessly integrate into the GNOME desktop environment, maintaining a consistent and user-friendly experience.
 
+## Setting Up
+
+To setup OCR, third-party API is used for this. You'll have to get a new key from <a href="http://api.ocr.space/" title="Get Your API KEY">http://api.ocr.space</a> once the provided free-trial API KEY is expired.
+
 ## Running
  To start up, press `Ctrl+F9` to bring it to view.
 
@@ -35,3 +39,4 @@ The following icon creators are attributed:
 
 ## Contact Us
 Have questions or need support? Feel free to reach out at zenon8adams@gmail.com
+
