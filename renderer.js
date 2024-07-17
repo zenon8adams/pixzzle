@@ -362,14 +362,13 @@ var UIImageRenderer = GObject.registerClass(
           }
           y_pan = true;
         }
-
         if (x_pan || y_pan) {
           /**
            * Disable panning for the side that
            * doesn't need it.
            */
           minX = iw >= vw ? 0 : minX;
-          minY = ih > vh ? 0 : minY;
+          minY = ih >= vh ? 0 : minY;
           pb = pb.new_subpixbuf(minX, minY, x_pan ? vw : scw, y_pan ? vh : sch);
         }
 
@@ -478,6 +477,17 @@ var UIImageRenderer = GObject.registerClass(
        */
       if (sf === 1) {
         const [zoomWidth, zoomHeight] = this._getBufferArea();
+        /**
+         * At zoom level 1, don't need to translate
+         * the zoomX and zoomY, we have to just
+         * set xpos and ypos to 0. We do this
+         * by comparing `viewWidth` and `viewHeight`
+         * with `zoomWidth` and `zoomHeight`.
+         * If `viewWidth >= zoomWidth`, the view is
+         * bigger than the image, we can set `minX`
+         * to 0.
+         */
+        const [viewWidth, viewHeight] = this._getMaxSize();
         const scaleDiff = this._lastScale - sf;
         const halfWidth = this.width / 2;
         const halfHeight = this.height / 2;
@@ -491,14 +501,14 @@ var UIImageRenderer = GObject.registerClass(
         ];
         // Downscaling...
         if (this._lastScale > sf) {
-          if (minX <= scaleDeltaX) {
+          if (minX <= scaleDeltaX || viewWidth >= zoomWidth) {
             minX = 0;
           } else if (minX + this._zoomedWidth + scaleDeltaX > zoomWidth) {
             minX = Math.max(0, this._xpos + this._zoomX - scaleDeltaX);
           } else {
             minX = Math.max(0, this._xpos + this._zoomX);
           }
-          if (minY <= scaleDeltaY) {
+          if (minY <= scaleDeltaY || viewHeight >= zoomHeight) {
             minY = 0;
           } else if (minY + this._zoomedHeight + scaleDeltaY > zoomHeight) {
             minY = Math.max(0, this._ypos + this._zoomY - scaleDeltaY);
@@ -506,14 +516,14 @@ var UIImageRenderer = GObject.registerClass(
             minY = Math.max(0, this._ypos + this._zoomY);
           }
         } else {
-          if (minX <= scaleDeltaX) {
+          if (minX <= scaleDeltaX || viewWidth >= zoomWidth) {
             minX = 0;
           } else if (minX + this._zoomedWidth >= zoomWidth) {
             minX = Math.max(0, this._xpos + this._zoomX);
           } else {
             minX = Math.max(0, this._xpos + this._zoomX);
           }
-          if (minY <= scaleDeltaY) {
+          if (minY <= scaleDeltaY || viewHeight >= zoomHeight) {
             minY = 0;
           } else if (minY + this._zoomedHeight >= zoomHeight) {
             minY = Math.max(0, this._ypos + this._zoomY);
