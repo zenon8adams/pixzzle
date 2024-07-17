@@ -33,7 +33,6 @@ const Me = ExtensionUtils.getCurrentExtension();
 const Utils = Me.imports.dock.utils;
 const Theming = Me.imports.dock.theming;
 const DockDash = Me.imports.dock.dash;
-const { UIImageRenderer } = Me.imports.renderer;
 const lg = Utils.lg;
 
 const DOCK_DWELL_CHECK_INTERVAL = 100;
@@ -148,7 +147,7 @@ var DockedDash = GObject.registerClass(
         'docker',
         'docker',
         GObject.ParamFlags.READWRITE | GObject.ParamSpec.CONSTRUCT,
-        UIImageRenderer.$gtype
+        St.Widget.$gtype
       )
     },
     Signals: {

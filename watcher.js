@@ -83,6 +83,7 @@ class ActionWatcher {
       this._poll();
     }
     this._watches = [];
+    this._maskedWatches = [];
   }
 
   _poll() {
@@ -114,14 +115,37 @@ class ActionWatcher {
     }
   }
 
+  mask(watch = null) {
+    lg('[ActionWatcher::mask]');
+    const to_mask = watch ? [watch] : [...this._watches];
+    for (const watch of to_mask) {
+      this._maskedWatches.push(watch);
+      this._removeWatch(watch);
+    }
+    this._updateTimeout();
+  }
+
+  unmask(watch = null) {
+    lg('[ActionWatcher::unmask]');
+    const to_unmask = watch ? [watch] : [...this._maskedWatches];
+    for (let i = 0; i < to_unmask.length; ++i) {
+      const watch = to_unmask[i];
+      if (this._maskedWatches[i] === watch) {
+        this._maskedWatches.splice(i, 1);
+      }
+      this._watches.push(watch);
+    }
+    this._updateTimeout();
+  }
+
   destroy() {
     if (this._timeoutId) {
       GLib.source_remove(this._timeoutId);
       this._timeoutId = 0;
     }
-    if(this._watchId) {
-        GLib.source_remove(this._watchId);
-        this._watchId = 0;
+    if (this._watchId) {
+      GLib.source_remove(this._watchId);
+      this._watchId = 0;
     }
     if (this._has_idle_monitor) {
       this._idleMonitor.remove_watch(this._idle_watch);
@@ -132,7 +156,6 @@ class ActionWatcher {
   }
 
   _onIdleMonitorBecameActive() {
-    lg('[ActionWatcher::_onIdleMonitorBecameActive]');
     this._idle = false;
     this._updateActions();
     this._updateTimeout();
@@ -178,6 +201,7 @@ class ActionWatcher {
         continue;
       }
 
+      lg('[ActionWatcher::_onIdleMonitorBecameActive]');
       let watch = this._watches[i];
       watch.callback(watch.data);
       if (watch === this._watches[i])

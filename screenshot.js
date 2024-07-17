@@ -356,12 +356,12 @@ const UIAreaSelector = GObject.registerClass(
 
     expandHandles() {
       if (Main.layoutManager.primaryIndex !== -1) {
-        const monitor =
-          Main.layoutManager.monitors[Main.layoutManager.primaryIndex];
-        this._startX = monitor.x;
-        this._startY = monitor.y;
-        this._lastX = monitor.x + monitor.width - 1;
-        this._lastY = monitor.y + monitor.height - 1;
+        const monitor = Main.layoutManager.primaryIndex;
+        const workArea = Main.layoutManager.getWorkAreaForMonitor(monitor);
+        this._startX = workArea.x;
+        this._startY = workArea.y;
+        this._lastX = workArea.x + workArea.width - 1;
+        this._lastY = workArea.y + workArea.height - 1;
 
         this._updateSelectionRect();
       }

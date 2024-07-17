@@ -21,7 +21,7 @@ const { Gio, GLib, St, Clutter } = imports.gi;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
-const { getShotsLocation, Constants } = Me.imports.utils;
+const { getShotsLocation, Constants, lg } = Me.imports.utils;
 
 /**
  * Stores a PNG-encoded screenshot into the clipboard and a file, and shows a
