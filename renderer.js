@@ -269,6 +269,12 @@ var UIImageRenderer = GObject.registerClass(
       this._zoomToolBox?.resetZoom();
     }
 
+    _reset() {
+      this._resetZoom();
+      this._orientationLU.fill(null);
+      this._reload();
+    }
+
     _pixbufAfterTransform(startX, startY, w, h) {
       let pb = null;
       const sf = this._getScale();
@@ -931,6 +937,7 @@ var UIImageRenderer = GObject.registerClass(
     _onSettingsChange() {
       this._bindSettings();
       lg('[UIImageRenderer::_onSettingsChange]');
+      this._reset();
     }
 
     _bindSettings() {
