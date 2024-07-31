@@ -1643,7 +1643,6 @@ const UISideViewBase = GObject.registerClass(
         y_expand: true
       });
       this._scrollView.add_actor(this._viewBox);
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _onScrollEvent(actor, event) {
@@ -1707,6 +1706,11 @@ const UISideViewBase = GObject.registerClass(
       if (this._ensureActorVisibilityTimeoutId) {
         GLib.source_remove(this._ensureActorVisibilityTimeoutId);
       }
+    }
+
+    destroy() {
+      this._onDestroy();
+      super.destroy();
     }
   }
 );

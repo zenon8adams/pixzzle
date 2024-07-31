@@ -120,7 +120,6 @@ var UIImageRenderer = GObject.registerClass(
       this._snipTrigger = null;
 
       this._canvas.connect('draw', this._draw.bind(this));
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _redraw(deltaX, deltaY) {
@@ -1272,6 +1271,11 @@ var UIImageRenderer = GObject.registerClass(
       this._settings.disconnect(this._settingsWatchId);
       this._settingsWatchId = null;
       this._anchor = null;
+    }
+
+    destroy() {
+      this._onDestroy();
+      super.destroy();
     }
 
     vfunc_button_press_event(event) {

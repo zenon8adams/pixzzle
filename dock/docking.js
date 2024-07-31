@@ -242,8 +242,6 @@ var DockedDash = GObject.registerClass(
       this._resetPosition();
 
       this.connect('notify::width', () => (this.translation_x = -this.width));
-
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _disableApps(appsId) {
@@ -277,6 +275,11 @@ var DockedDash = GObject.registerClass(
 
     _onDestroy() {
       this._themeManager.destroy();
+    }
+
+    destroy() {
+      this._onDestroy();
+      super.destroy();
     }
 
     /**

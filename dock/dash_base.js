@@ -231,8 +231,6 @@ var Dash = GObject.registerClass(
       super._init({
         name: 'dash'
       });
-
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _hookUpLabel(item, appIcon) {
@@ -309,6 +307,11 @@ var Dash = GObject.registerClass(
       if (this._showLabelTimeoutId) {
         GLib.source_remove(this._showLabelTimeoutId);
       }
+    }
+
+    destroy() {
+      this._onDestroy();
+      super.destroy();
     }
   }
 );

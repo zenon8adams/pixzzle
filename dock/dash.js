@@ -169,8 +169,6 @@ var DockDash = GObject.registerClass(
 
       this.add_child(this._background);
       this.add_child(this._dashContainer);
-
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _getApps() {
@@ -233,11 +231,16 @@ var DockDash = GObject.registerClass(
     _onDestroy() {
       if (this._requiresVisibilityTimeout)
         GLib.source_remove(this._requiresVisibilityTimeout);
-      if(this._ensureActorVisibilityTimeoutId) {
-          GLib.source_remove(this._ensureActorVisibilityTimeoutId);
+      if (this._ensureActorVisibilityTimeoutId) {
+        GLib.source_remove(this._ensureActorVisibilityTimeoutId);
       }
       this.pauseAnimation();
       this._docker = null;
+    }
+
+    destroy() {
+      this._onDestroy();
+      super.destroy();
     }
 
     _hookUpLabel() {
@@ -359,8 +362,8 @@ var DockDash = GObject.registerClass(
     }
 
     _redisplay() {
-      if(!this._controller.mapped) {
-          return;
+      if (!this._controller.mapped) {
+        return;
       }
       lg('[DockDash::_redisplay] disabled on load:', this._disableAppsOnLoad);
       const current = this._box
@@ -382,16 +385,24 @@ var DockDash = GObject.registerClass(
     }
 
     _linkAppToSignal(app) {
-      app.connectObject('refresh', (_, props) => this._rewireApp(app, props), this);
-      app.connectObject('clicked', (_, { event }) => {
-        lg('[DockDash::_linkAppToSignal::app::clicked]');
-        if (event) {
-          this._docker?._onKeyPress(event);
-        } else {
-          app.get_simulation().activate();
-        }
-        app.hide_on_trigger() && this._hide();
-      }, this);
+      app.connectObject(
+        'refresh',
+        (_, props) => this._rewireApp(app, props),
+        this
+      );
+      app.connectObject(
+        'clicked',
+        (_, { event }) => {
+          lg('[DockDash::_linkAppToSignal::app::clicked]');
+          if (event) {
+            this._docker?._onKeyPress(event);
+          } else {
+            app.get_simulation().activate();
+          }
+          app.hide_on_trigger() && this._hide();
+        },
+        this
+      );
       return app;
     }
 

@@ -1214,8 +1214,6 @@ var UIShutter = GObject.registerClass(
         this._sessionUpdated()
       );
       this._sessionUpdated();
-
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _showUI() {
@@ -1247,6 +1245,11 @@ var UIShutter = GObject.registerClass(
         GLib.Source.remove(this._timeoutId);
         this._timeoutId = null;
       }
+    }
+
+    destroy() {
+      this._onDestroy();
+      super.destroy();
     }
 
     _sessionUpdated() {

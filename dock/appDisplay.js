@@ -189,7 +189,6 @@ var AppIcon = GObject.registerClass(
       this.set_child(this._iconContainer);
 
       this._setUpApp(app, iconParams);
-      this.connect('destroy', this._onDestroy.bind(this));
     }
 
     _createIcon(iconSize) {
@@ -218,6 +217,11 @@ var AppIcon = GObject.registerClass(
       this.app.destroy();
       this._iconParams = null;
       this.app = null;
+    }
+
+    destroy() {
+      this._onDestroy();
+      super.destroy();
     }
 
     vfunc_leave_event(event) {
