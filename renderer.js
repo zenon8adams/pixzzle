@@ -488,6 +488,7 @@ var UIImageRenderer = GObject.registerClass(
          * to 0.
          */
         const [viewWidth, viewHeight] = this._getMaxSize();
+        const [vw, vh] = this._getMaxSize();
         const scaleDiff = this._lastScale - sf;
         const halfWidth = this.width / 2;
         const halfHeight = this.height / 2;
@@ -514,6 +515,20 @@ var UIImageRenderer = GObject.registerClass(
             minY = Math.max(0, this._ypos + this._zoomY - scaleDeltaY);
           } else {
             minY = Math.max(0, this._ypos + this._zoomY);
+          }
+
+          /**
+           * If `minX` and `minY` are still misaligned with
+           * the final positions they would have been
+           * had `xpos` and `ypos` been updated, we correct
+           * this by shifting `minX` and `minY` by the
+           * factor required to synchronize them.
+           */
+          if (minX + vw > zoomWidth) {
+            minX = -(vw - zoomWidth);
+          }
+          if (minY + vh > zoomHeight) {
+            minY = -(vh - zoomHeight);
           }
         } else {
           if (minX <= scaleDeltaX || viewWidth >= zoomWidth) {
