@@ -1597,7 +1597,13 @@ var UIMainViewer = GObject.registerClass(
 
     vfunc_leave_event(event) {
       lg('[UIMainViewer::vfunc_leave_event]');
-      global.display.set_cursor(Meta.Cursor.DEFAULT);
+      if (this._dragButton) {
+        return this._onMotion(event, null);
+      } else {
+        this._dragButton = 0;
+        global.display.set_cursor(Meta.Cursor.DEFAULT);
+      }
+
       return super.vfunc_leave_event(event);
     }
 
